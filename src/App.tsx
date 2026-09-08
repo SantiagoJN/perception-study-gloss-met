@@ -128,6 +128,16 @@ type Rating = {
   responseTimeMs?: number;
 };
 
+function ratingImageUrl(rating: Rating) {
+  if (rating.phase === 'training') {
+    return assetUrl('training/' + encodeAssetPath(rating.stimulus));
+  }
+  if (rating.stimulusId !== undefined && rating.imagePath) {
+    return studyImageUrl(rating.imagePath);
+  }
+  return assetUrl('stimuli/' + encodeAssetPath(rating.stimulus));
+}
+
 type ProlificMeta = {
   participantId: string;
   studyId: string;
@@ -454,14 +464,8 @@ export default function Home() {
       setTrainingRatings(nextTrainingRatings);
       setStudyRatings(nextStudyRatings);
       const urls = [
-        ...nextTrainingRatings.map((rating) =>
-          assetUrl('training/' + encodeAssetPath(rating.stimulus)),
-        ),
-        ...nextStudyRatings.map((rating) =>
-          rating.imagePath
-            ? studyImageUrl(rating.imagePath)
-            : studyImageUrl(rating.stimulus),
-        ),
+        ...nextTrainingRatings.map(ratingImageUrl),
+        ...nextStudyRatings.map(ratingImageUrl),
       ];
       setPreloadTotal(urls.length);
       await preloadImages(urls, (loaded) => {
@@ -984,13 +988,10 @@ export default function Home() {
   }
 
   const totalInPhase = activeRatings.length;
-  const imageFolder = isTraining ? 'training' : 'stimuli';
   const imageOffset = isTraining ? 0 : TRAINING_STIMULI.length;
   const imageNumber = imageOffset + index + 1;
   const completedOverall = imageOffset + completedInPhase;
-  const imageSrc = isTraining
-    ? assetUrl(imageFolder + '/' + encodeAssetPath(current.stimulus))
-    : studyImageUrl(current.imagePath ?? current.stimulus);
+  const imageSrc = ratingImageUrl(current);
 
   return (
     <main className="study-shell trial-shell">
