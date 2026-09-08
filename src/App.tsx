@@ -811,11 +811,11 @@ export default function Home() {
           >
             Continue to instructions <ArrowRight data-icon="inline-end" />
           </Button>
-          <p className="preview-note">
+          <!--<p className="preview-note">
             {isPreview
               ? 'Preview mode · Responses stay in this browser and can be downloaded at the end.'
               : 'Your Prolific identifiers were received successfully.'}
-          </p>
+          </p>-->
         </section>
       </main>
     );
