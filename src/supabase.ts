@@ -41,7 +41,6 @@ async function callRpc<T>(name: string, body: Record<string, unknown>) {
     method: 'POST',
     headers: {
       apikey: key,
-      Authorization: `Bearer ${key}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
