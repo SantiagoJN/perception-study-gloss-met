@@ -6,7 +6,7 @@ The study constants are centralized in `src/study-config.ts`. Supabase assigns
 exactly 80 main-study stimuli per participant, balances every stimulus toward 10
 completed ratings, stores results server-side, and keeps the assigned order
 stable if a participant reloads. The four initial images are stored separately
-from the 80 main responses.
+from the 80 main responses in the `initial_ratings` table.
 
 The application reads `PROLIFIC_PID`, `STUDY_ID`, and `SESSION_ID` from the URL.
 It requests the assignment as soon as the participant enters the tutorial and

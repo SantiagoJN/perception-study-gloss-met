@@ -561,6 +561,13 @@ export default function Home() {
             await submitStudySession(
               remoteSessionId,
               meta.participantId,
+              trainingRatings.map((rating, trainingIndex) => ({
+                stimulus: rating.stimulus,
+                trial_number: trainingIndex + 1,
+                glossiness: rating.glossiness!,
+                metallicness: rating.metallicness!,
+                response_time_ms: rating.responseTimeMs ?? 0,
+              })),
               nextRatings.map((rating) => ({
                 stimulus_id: rating.stimulusId!,
                 glossiness: rating.glossiness!,

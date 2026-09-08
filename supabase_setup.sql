@@ -50,6 +50,18 @@ create table if not exists public.ratings (
   primary key (study_session_id, stimulus_id)
 );
 
+create table if not exists public.initial_ratings (
+  study_session_id uuid not null references public.study_sessions(id) on delete cascade,
+  stimulus text not null,
+  trial_number smallint not null check (trial_number between 1 and 4),
+  glossiness smallint not null check (glossiness between 1 and 7),
+  metallicness smallint not null check (metallicness between 1 and 7),
+  response_time_ms integer not null check (response_time_ms >= 0),
+  created_at timestamptz not null default now(),
+  primary key (study_session_id, trial_number),
+  unique (study_session_id, stimulus)
+);
+
 create index if not exists stimuli_coverage_idx
   on public.stimuli (active, completed_labels, reserved_labels, target_labels);
 create index if not exists assignments_stimulus_idx
@@ -59,11 +71,13 @@ alter table public.stimuli enable row level security;
 alter table public.study_sessions enable row level security;
 alter table public.session_assignments enable row level security;
 alter table public.ratings enable row level security;
+alter table public.initial_ratings enable row level security;
 
 revoke all on public.stimuli from anon, authenticated;
 revoke all on public.study_sessions from anon, authenticated;
 revoke all on public.session_assignments from anon, authenticated;
 revoke all on public.ratings from anon, authenticated;
+revoke all on public.initial_ratings from anon, authenticated;
 
 create or replace function public.claim_study_assignment(
   p_participant_id text,
@@ -199,6 +213,7 @@ $$;
 create or replace function public.submit_study_session(
   p_study_session_id uuid,
   p_participant_id text,
+  p_initial_responses jsonb,
   p_responses jsonb
 )
 returns boolean
@@ -209,6 +224,7 @@ as $$
 declare
   v_status text;
   v_inserted integer;
+  v_initial_inserted integer;
 begin
   select s.status
     into v_status
@@ -223,9 +239,41 @@ begin
   if v_status = 'completed' then
     return true;
   end if;
-  if v_status <> 'assigned' or jsonb_typeof(p_responses) <> 'array'
+  if v_status <> 'assigned'
+     or jsonb_typeof(p_initial_responses) <> 'array'
+     or jsonb_array_length(p_initial_responses) <> 4
+     or jsonb_typeof(p_responses) <> 'array'
      or jsonb_array_length(p_responses) <> 80 then
     raise exception 'Incomplete or inactive study session';
+  end if;
+
+  insert into public.initial_ratings (
+    study_session_id,
+    stimulus,
+    trial_number,
+    glossiness,
+    metallicness,
+    response_time_ms
+  )
+  select
+    p_study_session_id,
+    response.stimulus,
+    response.trial_number,
+    response.glossiness,
+    response.metallicness,
+    response.response_time_ms
+  from jsonb_to_recordset(p_initial_responses) as response(
+    stimulus text,
+    trial_number smallint,
+    glossiness smallint,
+    metallicness smallint,
+    response_time_ms integer
+  )
+  on conflict (study_session_id, trial_number) do nothing;
+
+  get diagnostics v_initial_inserted = row_count;
+  if v_initial_inserted <> 4 then
+    raise exception 'Initial responses are incomplete';
   end if;
 
   insert into public.ratings (
@@ -280,6 +328,7 @@ end;
 $$;
 
 revoke execute on function public.claim_study_assignment(text, text, text, text) from public;
+revoke execute on function public.submit_study_session(uuid, text, jsonb, jsonb) from public;
 revoke execute on function public.submit_study_session(uuid, text, jsonb) from public;
 grant execute on function public.claim_study_assignment(text, text, text, text) to anon;
-grant execute on function public.submit_study_session(uuid, text, jsonb) to anon;
+grant execute on function public.submit_study_session(uuid, text, jsonb, jsonb) to anon;

@@ -19,6 +19,14 @@ export type SubmittedRating = {
   response_time_ms: number;
 };
 
+export type SubmittedInitialRating = {
+  stimulus: string;
+  trial_number: number;
+  glossiness: number;
+  metallicness: number;
+  response_time_ms: number;
+};
+
 declare global {
   interface Window {
     USER_STUDY_CONFIG?: {
@@ -72,11 +80,13 @@ export async function claimStudyAssignment(
 export async function submitStudySession(
   studySessionId: string,
   participantId: string,
+  initialRatings: SubmittedInitialRating[],
   ratings: SubmittedRating[],
 ) {
   return callRpc<boolean>('submit_study_session', {
     p_study_session_id: studySessionId,
     p_participant_id: participantId,
+    p_initial_responses: initialRatings,
     p_responses: ratings,
   });
 }
