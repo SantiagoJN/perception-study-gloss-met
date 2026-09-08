@@ -520,6 +520,54 @@
   margin: 1.5rem auto 0;
 }
 
+.preload-status {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.8rem;
+  max-width: 50rem;
+  margin: 1rem auto 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid oklch(0.78 0.06 244);
+  border-radius: 0.8rem;
+  background: oklch(0.96 0.025 235);
+  color: var(--foreground);
+}
+
+.preload-status > svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: var(--primary);
+}
+
+.preload-status div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.preload-status strong,
+.preload-status span {
+  display: block;
+}
+
+.preload-status span {
+  color: var(--muted-foreground);
+  font-size: 0.88rem;
+}
+
+.preload-error {
+  max-width: 50rem;
+  margin: 0.6rem auto 0;
+}
+
+.is-spinning {
+  animation: preload-spin 0.9s linear infinite;
+}
+
+@keyframes preload-spin {
+  to { transform: rotate(360deg); }
+}
+
 .trial-header {
   display: flex;
   align-items: center;
@@ -846,6 +894,8 @@
   .comparison-arrow { width: 1.8rem; height: 1.8rem; }
   .explanation-actions { align-items: stretch; flex-direction: column-reverse; gap: 0.6rem; }
   .explanation-actions button { width: 100%; }
+  .preload-status { grid-template-columns: auto 1fr; }
+  .preload-status button { grid-column: 1 / -1; width: 100%; }
   .rating-scale { gap: 0.25rem; }
   .rating-option { flex-direction: column; gap: 0.2rem; min-width: 0; }
   .scale-labels { font-size: 0.7rem; }

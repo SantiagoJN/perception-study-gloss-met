@@ -25,6 +25,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: Add runtime study configuration
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+          STIMULUS_BASE_URL: ${{ secrets.STIMULUS_BASE_URL }}
+        run: |
+          node --input-type=module -e "import fs from 'node:fs'; const config = { supabaseUrl: process.env.SUPABASE_URL ?? '', supabasePublishableKey: process.env.SUPABASE_PUBLISHABLE_KEY ?? '', stimulusBaseUrl: process.env.STIMULUS_BASE_URL ?? '' }; fs.writeFileSync('dist/config.js', 'window.USER_STUDY_CONFIG = ' + JSON.stringify(config) + ';\\n');"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:

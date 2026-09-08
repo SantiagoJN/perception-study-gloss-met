@@ -9,6 +9,7 @@ import {
   Download,
   Eye,
   FlaskConical,
+  LoaderCircle,
   Minimize2,
   Monitor,
   RotateCcw,
@@ -59,6 +60,52 @@ const ASSET_BASE = import.meta.env.BASE_URL;
 
 function assetUrl(path: string) {
   return ASSET_BASE + path.replace(/^\/+/, '');
+}
+
+function encodeAssetPath(path: string) {
+  return path
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+function studyImageUrl(path: string) {
+  if (/^https?:\/\//i.test(path)) return path;
+  const baseUrl = window.USER_STUDY_CONFIG?.stimulusBaseUrl
+    ?.trim()
+    .replace(/\/$/, '');
+  if (baseUrl) {
+    const relativePath = path.replace(/^\/+/, '').replace(/^stimuli\//, '');
+    return baseUrl + '/' + encodeAssetPath(relativePath);
+  }
+  const relativePath = path.startsWith('stimuli/') ? path : 'stimuli/' + path;
+  return assetUrl(encodeAssetPath(relativePath));
+}
+
+async function preloadImages(
+  urls: string[],
+  onProgress: (loaded: number) => void,
+) {
+  let nextIndex = 0;
+  let loaded = 0;
+  const workerCount = Math.min(6, urls.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < urls.length) {
+      const url = urls[nextIndex];
+      nextIndex += 1;
+      await new Promise<void>((resolve, reject) => {
+        const image = new Image();
+        image.decoding = 'async';
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error('Image preload failed'));
+        image.src = url;
+      });
+      loaded += 1;
+      onProgress(loaded);
+    }
+  });
+  await Promise.all(workers);
 }
 
 type Attribute = 'glossiness' | 'metallicness';
@@ -295,6 +342,9 @@ export default function Home() {
   const [expandedImage, setExpandedImage] = useState(false);
   const [testingMode, setTestingMode] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [studyPrepared, setStudyPrepared] = useState(false);
+  const [preloadedCount, setPreloadedCount] = useState(0);
+  const [preloadTotal, setPreloadTotal] = useState(0);
   const [startError, setStartError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
@@ -306,6 +356,7 @@ export default function Home() {
     sessionId: '',
   });
   const trialStartedAt = useRef(0);
+  const preloadRun = useRef(0);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -357,13 +408,18 @@ export default function Home() {
     [isPreview, meta.participantId],
   );
 
-  async function startStudy() {
+  async function prepareStudy() {
+    const runId = preloadRun.current + 1;
+    preloadRun.current = runId;
     const firstAttribute: Attribute =
       Math.random() < 0.5 ? 'glossiness' : 'metallicness';
     const secondAttribute: Attribute =
       firstAttribute === 'glossiness' ? 'metallicness' : 'glossiness';
     const nextOrder = [firstAttribute, secondAttribute];
     setStarting(true);
+    setStudyPrepared(false);
+    setPreloadedCount(0);
+    setPreloadTotal(0);
     setStartError('');
     try {
       const assignment = testingMode
@@ -391,23 +447,61 @@ export default function Home() {
       }
       setRemoteSessionId(assignment?.[0]?.study_session_id ?? '');
       setAttributeOrder(nextOrder);
-      setTrainingRatings(makeRatings(shuffle(TRAINING_STIMULI), 'training'));
+      const nextTrainingRatings = makeRatings(
+        shuffle(TRAINING_STIMULI),
+        'training',
+      );
+      setTrainingRatings(nextTrainingRatings);
       setStudyRatings(nextStudyRatings);
-      setIndex(0);
-      trialStartedAt.current = performance.now();
-      setStage('training');
+      const urls = [
+        ...nextTrainingRatings.map((rating) =>
+          assetUrl('training/' + encodeAssetPath(rating.stimulus)),
+        ),
+        ...nextStudyRatings.map((rating) =>
+          rating.imagePath
+            ? studyImageUrl(rating.imagePath)
+            : studyImageUrl(rating.stimulus),
+        ),
+      ];
+      setPreloadTotal(urls.length);
+      await preloadImages(urls, (loaded) => {
+        if (preloadRun.current === runId) setPreloadedCount(loaded);
+      });
+      if (preloadRun.current !== runId) return;
+      setStudyPrepared(true);
     } catch {
+      if (preloadRun.current !== runId) return;
+      setStudyPrepared(false);
+      setIndex(0);
       setStartError(
-        'The study could not be prepared. Please wait a moment and try again.',
+        'The study images could not be prepared. Check your connection and try again.',
       );
     } finally {
-      setStarting(false);
+      if (preloadRun.current === runId) setStarting(false);
     }
   }
 
   function openExplanation() {
     setExamplesRevealed(false);
     setStage('explanation');
+    void prepareStudy();
+  }
+
+  function startStudy() {
+    if (!studyPrepared) return;
+    setIndex(0);
+    trialStartedAt.current = performance.now();
+    setStage('training');
+  }
+
+  function returnToWelcome() {
+    preloadRun.current += 1;
+    setStarting(false);
+    setStudyPrepared(false);
+    setPreloadedCount(0);
+    setPreloadTotal(0);
+    setStartError('');
+    setStage('welcome');
   }
 
   function updateRating(field: Attribute, value: number) {
@@ -490,19 +584,13 @@ export default function Home() {
     }
 
     setExpandedImage(false);
-    setTestingMode(false);
-    setStarting(false);
-    setStartError('');
-    setSubmitting(false);
-    setSubmitError('');
-    setRemoteSessionId('');
-    setSavedRemotely(false);
     setShowAttributeHelp(false);
     setIndex((previous) => previous + 1);
     trialStartedAt.current = performance.now();
   }
 
   function restart() {
+    preloadRun.current += 1;
     setConsented(false);
     setAttributeOrder([]);
     setTrainingRatings([]);
@@ -511,6 +599,16 @@ export default function Home() {
     setExamplesRevealed(false);
     setShowAttributeHelp(false);
     setExpandedImage(false);
+    setTestingMode(false);
+    setStarting(false);
+    setStudyPrepared(false);
+    setPreloadedCount(0);
+    setPreloadTotal(0);
+    setStartError('');
+    setSubmitting(false);
+    setSubmitError('');
+    setRemoteSessionId('');
+    setSavedRemotely(false);
     setStage('welcome');
   }
 
@@ -580,7 +678,10 @@ export default function Home() {
               return { stage: 'explanation' };
             }
             if (stage === 'explanation') {
-              void startStudy();
+              if (!studyPrepared) {
+                throw new Error('The study images are still loading.');
+              }
+              startStudy();
               return {
                 stage: 'training',
                 totalSamples: TRAINING_STIMULI.length,
@@ -603,6 +704,7 @@ export default function Home() {
     index,
     stage,
     testingMode,
+    studyPrepared,
     totalTrialCount,
   ]);
 
@@ -777,16 +879,46 @@ export default function Home() {
               <Button
                 variant="ghost"
                 size="lg"
-                onClick={() => setStage('welcome')}
+                onClick={returnToWelcome}
               >
                 <ArrowLeft data-icon="inline-start" /> Back
               </Button>
-              <Button size="lg" disabled={starting} onClick={startStudy}>
-                {starting ? 'Preparing study…' : 'Start study'}
+              <Button
+                size="lg"
+                disabled={starting || !studyPrepared}
+                onClick={startStudy}
+              >
+                {studyPrepared ? 'Start study' : 'Please wait…'}
                 <ArrowRight data-icon="inline-end" />
               </Button>
-              {startError ? <p className="form-error">{startError}</p> : null}
             </div>
+            <div className="preload-status" role="status" aria-live="polite">
+              {studyPrepared ? (
+                <Check aria-hidden="true" />
+              ) : (
+                <LoaderCircle className={starting ? 'is-spinning' : ''} aria-hidden="true" />
+              )}
+              <div>
+                <strong>
+                  {studyPrepared
+                    ? 'Images ready'
+                    : starting
+                      ? `Preparing images ${preloadedCount} of ${preloadTotal || totalTrialCount}`
+                      : 'Images are not ready'}
+                </strong>
+                <span>
+                  {studyPrepared
+                    ? 'You can begin the study.'
+                    : 'Please wait here while the images are loaded.'}
+                </span>
+              </div>
+              {!studyPrepared && !starting ? (
+                <Button size="sm" variant="outline" onClick={() => void prepareStudy()}>
+                  Try again
+                </Button>
+              ) : null}
+            </div>
+            {startError ? <p className="form-error preload-error">{startError}</p> : null}
           </section>
         )}
       </main>
@@ -849,11 +981,9 @@ export default function Home() {
   const imageOffset = isTraining ? 0 : TRAINING_STIMULI.length;
   const imageNumber = imageOffset + index + 1;
   const completedOverall = imageOffset + completedInPhase;
-  const imageSrc = current.imagePath
-    ? /^https?:\/\//i.test(current.imagePath)
-      ? current.imagePath
-      : assetUrl(current.imagePath)
-    : assetUrl(imageFolder + '/' + encodeURIComponent(current.stimulus));
+  const imageSrc = isTraining
+    ? assetUrl(imageFolder + '/' + encodeAssetPath(current.stimulus))
+    : studyImageUrl(current.imagePath ?? current.stimulus);
 
   return (
     <main className="study-shell trial-shell">

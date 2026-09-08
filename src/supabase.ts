@@ -24,6 +24,7 @@ declare global {
     USER_STUDY_CONFIG?: {
       supabaseUrl?: string;
       supabasePublishableKey?: string;
+      stimulusBaseUrl?: string;
     };
   }
 }
