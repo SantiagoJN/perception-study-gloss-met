@@ -4,7 +4,7 @@ import path from 'node:path';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: '/perception-study-gloss-met/',
+  base: './',
   css: { postcss: { plugins: [tailwindcss()] } },
   plugins: [react()],
   resolve: {

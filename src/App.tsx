@@ -8,6 +8,7 @@ import {
   CircleHelp,
   Download,
   Eye,
+  FlaskConical,
   Minimize2,
   Monitor,
   RotateCcw,
@@ -19,6 +20,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Progress } from '@/components/ui/progress';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { MAIN_RATINGS_PER_SESSION } from '@/study-config';
+import {
+  claimStudyAssignment,
+  submitStudySession,
+} from '@/supabase';
 
 const BASE_STIMULI = [
   'Ceramic__0330_marble_wall_01.png',
@@ -46,7 +51,7 @@ const TRAINING_STIMULI = [
   'g1m0_[3_3_ninomaru_teien_2k_shift_200][sphere][MERL_EDIT-beige-fabric_diff_mix_white-paint_spec_hue_0_sat_1_spec_0].jpg',
   'g1m1_[3_3_ninomaru_teien_2k_shift_200][sphere][RGL-chm_orange_rgb].jpg',
 ];
-const TOTAL_TRIAL_COUNT = TRAINING_STIMULI.length + STUDY_TRIAL_COUNT;
+const TESTING_TRIAL_COUNT = 10;
 
 const SCALE = [1, 2, 3, 4, 5, 6, 7];
 const COMPLETION_CODE = 'PREVIEW';
@@ -67,6 +72,8 @@ type Phase = 'training' | 'study';
 
 type Rating = {
   stimulus: string;
+  stimulusId?: number;
+  imagePath?: string;
   phase: Phase;
   trialNumber: number;
   glossiness: number | null;
@@ -286,6 +293,13 @@ export default function Home() {
   const [index, setIndex] = useState(0);
   const [showAttributeHelp, setShowAttributeHelp] = useState(false);
   const [expandedImage, setExpandedImage] = useState(false);
+  const [testingMode, setTestingMode] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+  const [remoteSessionId, setRemoteSessionId] = useState('');
+  const [savedRemotely, setSavedRemotely] = useState(false);
   const [meta, setMeta] = useState<ProlificMeta>({
     participantId: '',
     studyId: '',
@@ -332,6 +346,10 @@ export default function Home() {
       current.metallicness !== null,
   );
   const isPreview = !meta.participantId;
+  const mainTrialCount = testingMode
+    ? TESTING_TRIAL_COUNT
+    : STUDY_TRIAL_COUNT;
+  const totalTrialCount = TRAINING_STIMULI.length + mainTrialCount;
 
   const sessionLabel = useMemo(
     () =>
@@ -339,17 +357,52 @@ export default function Home() {
     [isPreview, meta.participantId],
   );
 
-  function startStudy() {
+  async function startStudy() {
     const firstAttribute: Attribute =
       Math.random() < 0.5 ? 'glossiness' : 'metallicness';
     const secondAttribute: Attribute =
       firstAttribute === 'glossiness' ? 'metallicness' : 'glossiness';
-    setAttributeOrder([firstAttribute, secondAttribute]);
-    setTrainingRatings(makeRatings(shuffle(TRAINING_STIMULI), 'training'));
-    setStudyRatings(makeRatings(shuffle(STIMULI), 'study'));
-    setIndex(0);
-    trialStartedAt.current = performance.now();
-    setStage('training');
+    const nextOrder = [firstAttribute, secondAttribute];
+    setStarting(true);
+    setStartError('');
+    try {
+      const assignment = testingMode
+        ? null
+        : await claimStudyAssignment(
+            meta,
+            firstAttribute + '_then_' + secondAttribute,
+          );
+      const nextStudyRatings = assignment?.length
+        ? assignment.map((item) => ({
+            stimulus: item.file_name,
+            stimulusId: item.stimulus_id,
+            imagePath: item.public_path,
+            phase: 'study' as const,
+            trialNumber: item.trial_number,
+            glossiness: null,
+            metallicness: null,
+          }))
+        : makeRatings(
+            shuffle(STIMULI).slice(0, mainTrialCount),
+            'study',
+          );
+      if (assignment?.length && assignment.length !== STUDY_TRIAL_COUNT) {
+        throw new Error('The server did not return exactly 80 images.');
+      }
+      setRemoteSessionId(assignment?.[0]?.study_session_id ?? '');
+      setAttributeOrder(nextOrder);
+      setTrainingRatings(makeRatings(shuffle(TRAINING_STIMULI), 'training'));
+      setStudyRatings(nextStudyRatings);
+      setIndex(0);
+      trialStartedAt.current = performance.now();
+      setStage('training');
+    } catch {
+      setStartError(
+        'The study could not be prepared. Please wait a moment and try again.',
+      );
+    } finally {
+      setStarting(false);
+    }
   }
 
   function openExplanation() {
@@ -374,8 +427,8 @@ export default function Home() {
     trialStartedAt.current = performance.now();
   }
 
-  function continueRatings() {
-    if (!canContinue) return;
+  async function continueRatings() {
+    if (!canContinue || submitting) return;
     const elapsed = Math.round(performance.now() - trialStartedAt.current);
     const nextRatings = activeRatings.map((rating, ratingIndex) =>
       ratingIndex === index
@@ -397,6 +450,7 @@ export default function Home() {
         const result = {
           meta,
           attributeOrder,
+          testingMode,
           glossinessFirst: attributeOrder[0] === 'glossiness',
           trainingRatings,
           studyRatings: nextRatings,
@@ -406,12 +460,43 @@ export default function Home() {
           'material-perception-last-result',
           JSON.stringify(result),
         );
+        if (remoteSessionId) {
+          setSubmitting(true);
+          setSubmitError('');
+          try {
+            await submitStudySession(
+              remoteSessionId,
+              meta.participantId,
+              nextRatings.map((rating) => ({
+                stimulus_id: rating.stimulusId!,
+                glossiness: rating.glossiness!,
+                metallicness: rating.metallicness!,
+                response_time_ms: rating.responseTimeMs ?? 0,
+              })),
+            );
+            setSavedRemotely(true);
+          } catch {
+            setSubmitError(
+              'Your responses could not be saved. Please try again without closing this page.',
+            );
+            setSubmitting(false);
+            return;
+          }
+          setSubmitting(false);
+        }
         setStage('complete');
       }
       return;
     }
 
     setExpandedImage(false);
+    setTestingMode(false);
+    setStarting(false);
+    setStartError('');
+    setSubmitting(false);
+    setSubmitError('');
+    setRemoteSessionId('');
+    setSavedRemotely(false);
     setShowAttributeHelp(false);
     setIndex((previous) => previous + 1);
     trialStartedAt.current = performance.now();
@@ -459,7 +544,7 @@ export default function Home() {
                 : stage === 'study'
                   ? TRAINING_STIMULI.length + index + 1
                   : null,
-            totalSamples: TOTAL_TRIAL_COUNT,
+            totalSamples: totalTrialCount,
             completedSamples:
               stage === 'study'
                 ? TRAINING_STIMULI.length + completedInPhase
@@ -495,7 +580,7 @@ export default function Home() {
               return { stage: 'explanation' };
             }
             if (stage === 'explanation') {
-              startStudy();
+              void startStudy();
               return {
                 stage: 'training',
                 totalSamples: TRAINING_STIMULI.length,
@@ -511,7 +596,15 @@ export default function Home() {
     };
     void register().catch(() => undefined);
     return () => lifecycle.abort();
-  }, [attributeOrder, completedInPhase, consented, index, stage]);
+  }, [
+    attributeOrder,
+    completedInPhase,
+    consented,
+    index,
+    stage,
+    testingMode,
+    totalTrialCount,
+  ]);
 
   if (stage === 'welcome') {
     return (
@@ -543,7 +636,7 @@ export default function Home() {
               <span className="fact-label">Estimated time</span>
             </div>
             <div>
-              <span className="fact-value">84</span>
+              <span className="fact-value">{totalTrialCount}</span>
               <span className="fact-label">Images to rate</span>
             </div>
             <div>
@@ -551,6 +644,17 @@ export default function Home() {
               <span className="fact-label">Desktop or laptop</span>
             </div>
           </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            className="testing-toggle"
+            aria-pressed={testingMode}
+            onClick={() => setTestingMode((enabled) => !enabled)}
+          >
+            <FlaskConical aria-hidden="true" /> Testing
+            <span>{testingMode ? 'On' : 'Off'}</span>
+          </Button>
 
           <div className="instructions compact-instructions">
             <h2>Before you begin</h2>
@@ -677,9 +781,11 @@ export default function Home() {
               >
                 <ArrowLeft data-icon="inline-start" /> Back
               </Button>
-              <Button size="lg" onClick={startStudy}>
-                Start study <ArrowRight data-icon="inline-end" />
+              <Button size="lg" disabled={starting} onClick={startStudy}>
+                {starting ? 'Preparing study…' : 'Start study'}
+                <ArrowRight data-icon="inline-end" />
               </Button>
+              {startError ? <p className="form-error">{startError}</p> : null}
             </div>
           </section>
         )}
@@ -692,12 +798,12 @@ export default function Home() {
       <main className="study-shell complete-shell">
         <section className="complete-card" aria-labelledby="complete-title">
           <div className="success-icon" aria-hidden="true"><Check /></div>
-          <p className="eyebrow">All {TOTAL_TRIAL_COUNT} samples rated</p>
+          <p className="eyebrow">All {totalTrialCount} samples rated</p>
           <h1 id="complete-title">Thank you for taking part</h1>
           <p className="lead">
-            Your responses have been recorded in this browser. In the
-            production study, this step will save them to the research database
-            before returning you to Prolific.
+            {savedRemotely
+              ? 'Your responses have been saved successfully.'
+              : 'Your responses have been recorded in this browser and are available for testing.'}
           </p>
           <div className="complete-actions">
             <Button
@@ -743,9 +849,11 @@ export default function Home() {
   const imageOffset = isTraining ? 0 : TRAINING_STIMULI.length;
   const imageNumber = imageOffset + index + 1;
   const completedOverall = imageOffset + completedInPhase;
-  const imageSrc = assetUrl(
-    imageFolder + '/' + encodeURIComponent(current.stimulus),
-  );
+  const imageSrc = current.imagePath
+    ? /^https?:\/\//i.test(current.imagePath)
+      ? current.imagePath
+      : assetUrl(current.imagePath)
+    : assetUrl(imageFolder + '/' + encodeURIComponent(current.stimulus));
 
   return (
     <main className="study-shell trial-shell">
@@ -754,19 +862,19 @@ export default function Home() {
           <span className="brand-dot" aria-hidden="true" />
           Material appearance
         </div>
-        <span>Image {imageNumber} of {TOTAL_TRIAL_COUNT}</span>
+        <span>Image {imageNumber} of {totalTrialCount}</span>
       </header>
 
       <Progress
         value={
           ((imageNumber - 1 + (canContinue ? 1 : 0)) /
-            TOTAL_TRIAL_COUNT) *
+            totalTrialCount) *
           100
         }
         aria-label={
           completedOverall +
           ' of ' +
-          TOTAL_TRIAL_COUNT +
+          totalTrialCount +
           ' images completed'
         }
         className="study-progress"
@@ -871,10 +979,12 @@ export default function Home() {
             </Button>
             <Button
               size="lg"
-              disabled={!canContinue}
+              disabled={!canContinue || submitting}
               onClick={continueRatings}
             >
-              {index === totalInPhase - 1
+              {submitting
+                ? 'Saving responses…'
+                : index === totalInPhase - 1
                 ? isTraining
                   ? 'Next image'
                   : 'Finish study'
@@ -882,6 +992,7 @@ export default function Home() {
               <ArrowRight data-icon="inline-end" />
             </Button>
           </div>
+          {submitError ? <p className="form-error">{submitError}</p> : null}
         </div>
       </section>
       {expandedImage ? (
