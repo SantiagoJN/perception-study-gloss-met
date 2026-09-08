@@ -99,11 +99,40 @@ begin
     raise exception 'Invalid attribute order';
   end if;
 
+  -- Release assignments from clearly abandoned sessions so that their
+  -- stimuli can still reach the requested number of completed labels.
+  with stale_sessions as materialized (
+    select s.id
+    from public.study_sessions as s
+    where s.status = 'assigned'
+      and s.assigned_at < now() - interval '6 hours'
+    for update skip locked
+  ), released_reservations as (
+    update public.stimuli as s
+    set reserved_labels = greatest(
+      0,
+      s.reserved_labels - expired.reservation_count
+    )::smallint
+    from (
+      select a.stimulus_id, count(*)::integer as reservation_count
+      from public.session_assignments as a
+      join stale_sessions as stale on stale.id = a.study_session_id
+      group by a.stimulus_id
+    ) as expired
+    where s.id = expired.stimulus_id
+  )
+  update public.study_sessions as s
+  set status = 'expired'
+  where s.id in (select stale.id from stale_sessions as stale);
+
   select s.id
     into v_study_session_id
   from public.study_sessions as s
-  where s.prolific_session_id = p_prolific_session_id
-     or (s.participant_id = p_participant_id and s.prolific_study_id = p_study_id)
+  where (
+    s.prolific_session_id = p_prolific_session_id
+    or (s.participant_id = p_participant_id and s.prolific_study_id = p_study_id)
+  )
+    and s.status <> 'expired'
   order by s.assigned_at desc
   limit 1;
 
