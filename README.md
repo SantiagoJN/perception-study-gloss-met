@@ -9,9 +9,13 @@ stable if a participant reloads. The four initial images are stored separately
 from the 80 main responses in the `initial_ratings` table.
 
 The application reads `PROLIFIC_PID`, `STUDY_ID`, and `SESSION_ID` from the URL.
-It requests the assignment as soon as the participant enters the tutorial and
-preloads all 84 images before enabling the start button. The temporary Testing
-toggle runs 4 + 10 bundled images without writing to Supabase.
+When those parameters are absent, a tab-scoped anonymous identifier is created
+so a normal direct run is still assigned and saved in Supabase. It requests the
+assignment as soon as the participant enters the tutorial and preloads all 84
+images before enabling the start button. The temporary Testing toggle runs
+4 + 10 bundled images locally, does not write to Supabase, and exposes the CSV
+download only on its final screen. Normal runs do not retain result data in the
+browser.
 
 Deployment configuration is injected by GitHub Actions from these repository
 secrets:

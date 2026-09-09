@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -12,7 +12,6 @@ import {
   LoaderCircle,
   Minimize2,
   Monitor,
-  RotateCcw,
   ZoomIn,
 } from 'lucide-react';
 
@@ -55,7 +54,6 @@ const TRAINING_STIMULI = [
 const TESTING_TRIAL_COUNT = 10;
 
 const SCALE = [1, 2, 3, 4, 5, 6, 7];
-const COMPLETION_CODE = 'PREVIEW';
 const ASSET_BASE = import.meta.env.BASE_URL;
 
 function assetUrl(path: string) {
@@ -143,6 +141,38 @@ type ProlificMeta = {
   studyId: string;
   sessionId: string;
 };
+
+function createAnonymousId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+}
+
+function readStudyMetadata(): ProlificMeta {
+  const params = new URLSearchParams(window.location.search);
+  const prolificParticipantId = params.get('PROLIFIC_PID')?.trim();
+  const prolificSessionId = params.get('SESSION_ID')?.trim();
+  if (prolificParticipantId && prolificSessionId) {
+    return {
+      participantId: prolificParticipantId,
+      studyId: params.get('STUDY_ID')?.trim() || 'prolific-study',
+      sessionId: prolificSessionId,
+    };
+  }
+
+  const storageKey = 'material-perception-direct-session';
+  let directSessionId = sessionStorage.getItem(storageKey);
+  if (!directSessionId) {
+    directSessionId = createAnonymousId();
+    sessionStorage.setItem(storageKey, directSessionId);
+  }
+  return {
+    participantId: 'direct-' + directSessionId,
+    studyId: 'direct-web',
+    sessionId: directSessionId,
+  };
+}
 
 type ModelContext = {
   registerTool: (
@@ -359,26 +389,9 @@ export default function Home() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [remoteSessionId, setRemoteSessionId] = useState('');
-  const [savedRemotely, setSavedRemotely] = useState(false);
-  const [meta, setMeta] = useState<ProlificMeta>({
-    participantId: '',
-    studyId: '',
-    sessionId: '',
-  });
+  const [meta] = useState<ProlificMeta>(readStudyMetadata);
   const trialStartedAt = useRef(0);
   const preloadRun = useRef(0);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const timer = window.setTimeout(() => {
-      setMeta({
-        participantId: params.get('PROLIFIC_PID') ?? '',
-        studyId: params.get('STUDY_ID') ?? '',
-        sessionId: params.get('SESSION_ID') ?? '',
-      });
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
 
   useEffect(() => {
     if (!expandedImage) return;
@@ -406,17 +419,10 @@ export default function Home() {
       current.glossiness !== null &&
       current.metallicness !== null,
   );
-  const isPreview = !meta.participantId;
   const mainTrialCount = testingMode
     ? TESTING_TRIAL_COUNT
     : STUDY_TRIAL_COUNT;
   const totalTrialCount = TRAINING_STIMULI.length + mainTrialCount;
-
-  const sessionLabel = useMemo(
-    () =>
-      isPreview ? 'Preview session' : 'Participant ' + meta.participantId,
-    [isPreview, meta.participantId],
-  );
 
   async function prepareStudy() {
     const runId = preloadRun.current + 1;
@@ -554,14 +560,18 @@ export default function Home() {
           studyRatings: nextRatings,
           completedAt: new Date().toISOString(),
         };
-        localStorage.setItem(
-          'material-perception-last-result',
-          JSON.stringify(result),
-        );
-        if (remoteSessionId) {
+        if (testingMode) {
+          localStorage.setItem(
+            'material-perception-last-result',
+            JSON.stringify(result),
+          );
+        } else {
           setSubmitting(true);
           setSubmitError('');
           try {
+            if (!remoteSessionId) {
+              throw new Error('The remote study session is missing.');
+            }
             await submitStudySession(
               remoteSessionId,
               meta.participantId,
@@ -579,7 +589,6 @@ export default function Home() {
                 response_time_ms: rating.responseTimeMs ?? 0,
               })),
             );
-            setSavedRemotely(true);
           } catch {
             setSubmitError(
               'Your responses could not be saved. Please try again without closing this page.',
@@ -598,29 +607,6 @@ export default function Home() {
     setShowAttributeHelp(false);
     setIndex((previous) => previous + 1);
     trialStartedAt.current = performance.now();
-  }
-
-  function restart() {
-    preloadRun.current += 1;
-    setConsented(false);
-    setAttributeOrder([]);
-    setTrainingRatings([]);
-    setStudyRatings([]);
-    setIndex(0);
-    setExamplesRevealed(false);
-    setShowAttributeHelp(false);
-    setExpandedImage(false);
-    setTestingMode(false);
-    setStarting(false);
-    setStudyPrepared(false);
-    setPreloadedCount(0);
-    setPreloadTotal(0);
-    setStartError('');
-    setSubmitting(false);
-    setSubmitError('');
-    setRemoteSessionId('');
-    setSavedRemotely(false);
-    setStage('welcome');
   }
 
   useEffect(() => {
@@ -811,11 +797,6 @@ export default function Home() {
           >
             Continue to instructions <ArrowRight data-icon="inline-end" />
           </Button>
-          {/* <p className="preview-note">
-            {isPreview
-              ? 'Preview mode · Responses stay in this browser and can be downloaded at the end.'
-              : 'Your Prolific identifiers were received successfully.'}
-          </p> */}
         </section>
       </main>
     );
@@ -941,47 +922,26 @@ export default function Home() {
       <main className="study-shell complete-shell">
         <section className="complete-card" aria-labelledby="complete-title">
           <div className="success-icon" aria-hidden="true"><Check /></div>
-          <p className="eyebrow">All {totalTrialCount} samples rated</p>
-          <h1 id="complete-title">Thank you for taking part</h1>
-          <p className="lead">
-            {savedRemotely
-              ? 'Your responses have been saved successfully.'
-              : 'Your responses have been recorded in this browser and are available for testing.'}
-          </p>
-          <div className="complete-actions">
-            <Button
-              size="lg"
-              onClick={() =>
-                downloadResults(
-                  trainingRatings,
-                  studyRatings,
-                  meta,
-                  attributeOrder,
-                )
-              }
-            >
-              <Download data-icon="inline-start" /> Download test data
-            </Button>
-            {!isPreview && COMPLETION_CODE !== 'PREVIEW' ? (
+          <h1 id="complete-title">
+            Thank you for taking part in this user study.
+          </h1>
+          {testingMode ? (
+            <div className="complete-actions">
               <Button
                 size="lg"
-                variant="outline"
                 onClick={() =>
-                  window.location.assign(
-                    'https://app.prolific.com/submissions/complete?cc=' +
-                      COMPLETION_CODE,
+                  downloadResults(
+                    trainingRatings,
+                    studyRatings,
+                    meta,
+                    attributeOrder,
                   )
                 }
               >
-                Return to Prolific <ArrowRight data-icon="inline-end" />
+                <Download data-icon="inline-start" /> Download test data
               </Button>
-            ) : (
-              <Button size="lg" variant="outline" onClick={restart}>
-                <RotateCcw data-icon="inline-start" /> Run preview again
-              </Button>
-            )}
-          </div>
-          <p className="session-id">{sessionLabel}</p>
+            </div>
+          ) : null}
         </section>
       </main>
     );
