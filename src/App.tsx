@@ -921,7 +921,6 @@ export default function Home() {
     return (
       <main className="study-shell complete-shell">
         <section className="complete-card" aria-labelledby="complete-title">
-          <div className="success-icon" aria-hidden="true"><Check /></div>
           <h1 id="complete-title">
             Thank you for taking part in this user study.
           </h1>
