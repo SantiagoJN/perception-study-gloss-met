@@ -52,6 +52,8 @@ const TRAINING_STIMULI = [
   'g1m1_[3_3_ninomaru_teien_2k_shift_200][sphere][RGL-chm_orange_rgb].jpg',
 ];
 const TESTING_TRIAL_COUNT = 10;
+const REPEATED_TRIAL_COUNT = 6;
+const REPEAT_AFTER_BASE_TRIALS = [12, 25, 38, 51, 64, 77];
 
 const SCALE = [1, 2, 3, 4, 5, 6, 7];
 const ASSET_BASE = import.meta.env.BASE_URL;
@@ -125,7 +127,50 @@ type Rating = {
   glossiness: number | null;
   metallicness: number | null;
   responseTimeMs?: number;
+  assignmentTrialNumber?: number;
+  isRepeat?: boolean;
+  repeatOfTrialNumber?: number;
 };
+
+function addRepeatedRatings(ratings: Rating[]) {
+  const presented: Rating[] = [];
+  const repeatedStimulusIds = new Set<number>();
+
+  ratings.forEach((rating, baseIndex) => {
+    const original: Rating = {
+      ...rating,
+      assignmentTrialNumber: rating.trialNumber,
+      trialNumber: presented.length + 1,
+      isRepeat: false,
+    };
+    presented.push(original);
+
+    if (!REPEAT_AFTER_BASE_TRIALS.includes(baseIndex + 1)) return;
+    const candidates = presented.filter(
+      (candidate) =>
+        !candidate.isRepeat &&
+        candidate.stimulusId !== undefined &&
+        !repeatedStimulusIds.has(candidate.stimulusId),
+    );
+    const source = candidates[Math.floor(Math.random() * candidates.length)];
+    if (!source || source.stimulusId === undefined) return;
+    repeatedStimulusIds.add(source.stimulusId);
+    presented.push({
+      ...source,
+      trialNumber: presented.length + 1,
+      glossiness: null,
+      metallicness: null,
+      responseTimeMs: undefined,
+      isRepeat: true,
+      repeatOfTrialNumber: source.trialNumber,
+    });
+  });
+
+  if (repeatedStimulusIds.size !== REPEATED_TRIAL_COUNT) {
+    throw new Error('The repeated study images could not be prepared.');
+  }
+  return presented;
+}
 
 function ratingImageUrl(rating: Rating) {
   if (rating.phase === 'training') {
@@ -393,6 +438,9 @@ function downloadResults(
     'metallicness',
     'attribute_order',
     'glossiness_first',
+    'is_repeat',
+    'repeat_of_trial_number',
+    'assignment_trial_number',
     'gender',
     'gender_other',
     'age',
@@ -414,6 +462,9 @@ function downloadResults(
       rating.metallicness,
       attributeOrder[0] + '_then_' + attributeOrder[1],
       glossinessFirst,
+      Boolean(rating.isRepeat),
+      rating.repeatOfTrialNumber ?? '',
+      rating.assignmentTrialNumber ?? '',
       demographics.gender,
       demographics.gender === 'other' ? demographics.genderOther : '',
       demographics.age,
@@ -495,7 +546,10 @@ export default function Home() {
   const mainTrialCount = testingMode
     ? TESTING_TRIAL_COUNT
     : STUDY_TRIAL_COUNT;
-  const totalTrialCount = TRAINING_STIMULI.length + mainTrialCount;
+  const presentedStudyCount = testingMode
+    ? mainTrialCount
+    : mainTrialCount + REPEATED_TRIAL_COUNT;
+  const totalTrialCount = TRAINING_STIMULI.length + presentedStudyCount;
   const age = Number(demographics.age);
   const demographicsComplete = Boolean(
     demographics.gender &&
@@ -541,7 +595,7 @@ export default function Home() {
               artistic_experience: demographicData.artisticExperience,
             },
           );
-      const nextStudyRatings = assignment?.length
+      const baseStudyRatings: Rating[] = assignment?.length
         ? assignment.map((item) => ({
             stimulus: item.file_name,
             stimulusId: item.stimulus_id,
@@ -558,6 +612,9 @@ export default function Home() {
       if (assignment?.length && assignment.length !== STUDY_TRIAL_COUNT) {
         throw new Error('The server did not return exactly 80 images.');
       }
+      const nextStudyRatings = testingMode
+        ? baseStudyRatings
+        : addRepeatedRatings(baseStudyRatings);
       setRemoteSessionId(assignment?.[0]?.study_session_id ?? '');
       setAttributeOrder(nextOrder);
       const nextTrainingRatings = makeRatings(
@@ -685,8 +742,16 @@ export default function Home() {
                 metallicness: rating.metallicness!,
                 response_time_ms: rating.responseTimeMs ?? 0,
               })),
-              nextRatings.map((rating) => ({
+              nextRatings.filter((rating) => !rating.isRepeat).map((rating) => ({
                 stimulus_id: rating.stimulusId!,
+                glossiness: rating.glossiness!,
+                metallicness: rating.metallicness!,
+                response_time_ms: rating.responseTimeMs ?? 0,
+              })),
+              nextRatings.filter((rating) => rating.isRepeat).map((rating) => ({
+                stimulus_id: rating.stimulusId!,
+                trial_number: rating.trialNumber,
+                repeat_of_trial_number: rating.repeatOfTrialNumber!,
                 glossiness: rating.glossiness!,
                 metallicness: rating.metallicness!,
                 response_time_ms: rating.responseTimeMs ?? 0,

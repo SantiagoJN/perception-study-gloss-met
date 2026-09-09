@@ -28,6 +28,11 @@ export type SubmittedRating = {
   response_time_ms: number;
 };
 
+export type SubmittedRepeatedRating = SubmittedRating & {
+  trial_number: number;
+  repeat_of_trial_number: number;
+};
+
 export type SubmittedInitialRating = {
   stimulus: string;
   trial_number: number;
@@ -93,11 +98,13 @@ export async function submitStudySession(
   participantId: string,
   initialRatings: SubmittedInitialRating[],
   ratings: SubmittedRating[],
+  repeatedRatings: SubmittedRepeatedRating[],
 ) {
   return callRpc<boolean>('submit_study_session', {
     p_study_session_id: studySessionId,
     p_participant_id: participantId,
     p_initial_responses: initialRatings,
     p_responses: ratings,
+    p_repeat_responses: repeatedRatings,
   });
 }

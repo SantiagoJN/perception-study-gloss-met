@@ -64,6 +64,22 @@ create table if not exists public.ratings (
   primary key (study_session_id, stimulus_id)
 );
 
+create table if not exists public.repeated_ratings (
+  study_session_id uuid not null references public.study_sessions(id) on delete cascade,
+  stimulus_id bigint not null references public.stimuli(id),
+  trial_number smallint not null check (trial_number between 1 and 86),
+  repeat_of_trial_number smallint not null check (
+    repeat_of_trial_number between 1 and 86
+    and repeat_of_trial_number < trial_number
+  ),
+  glossiness smallint not null check (glossiness between 1 and 7),
+  metallicness smallint not null check (metallicness between 1 and 7),
+  response_time_ms integer not null check (response_time_ms >= 0),
+  created_at timestamptz not null default now(),
+  primary key (study_session_id, trial_number),
+  unique (study_session_id, stimulus_id)
+);
+
 create table if not exists public.initial_ratings (
   study_session_id uuid not null references public.study_sessions(id) on delete cascade,
   stimulus text not null,
@@ -85,12 +101,14 @@ alter table public.stimuli enable row level security;
 alter table public.study_sessions enable row level security;
 alter table public.session_assignments enable row level security;
 alter table public.ratings enable row level security;
+alter table public.repeated_ratings enable row level security;
 alter table public.initial_ratings enable row level security;
 
 revoke all on public.stimuli from anon, authenticated;
 revoke all on public.study_sessions from anon, authenticated;
 revoke all on public.session_assignments from anon, authenticated;
 revoke all on public.ratings from anon, authenticated;
+revoke all on public.repeated_ratings from anon, authenticated;
 revoke all on public.initial_ratings from anon, authenticated;
 
 create or replace function public.claim_study_assignment(
@@ -284,7 +302,8 @@ create or replace function public.submit_study_session(
   p_study_session_id uuid,
   p_participant_id text,
   p_initial_responses jsonb,
-  p_responses jsonb
+  p_responses jsonb,
+  p_repeat_responses jsonb
 )
 returns boolean
 language plpgsql
@@ -295,6 +314,7 @@ declare
   v_status text;
   v_inserted integer;
   v_initial_inserted integer;
+  v_repeat_inserted integer;
 begin
   select s.status
     into v_status
@@ -313,7 +333,9 @@ begin
      or jsonb_typeof(p_initial_responses) <> 'array'
      or jsonb_array_length(p_initial_responses) <> 4
      or jsonb_typeof(p_responses) <> 'array'
-     or jsonb_array_length(p_responses) <> 80 then
+     or jsonb_array_length(p_responses) <> 80
+     or jsonb_typeof(p_repeat_responses) <> 'array'
+     or jsonb_array_length(p_repeat_responses) <> 6 then
     raise exception 'Incomplete or inactive study session';
   end if;
 
@@ -375,6 +397,41 @@ begin
     raise exception 'Responses do not match the assigned stimuli';
   end if;
 
+  insert into public.repeated_ratings (
+    study_session_id,
+    stimulus_id,
+    trial_number,
+    repeat_of_trial_number,
+    glossiness,
+    metallicness,
+    response_time_ms
+  )
+  select
+    p_study_session_id,
+    response.stimulus_id,
+    response.trial_number,
+    response.repeat_of_trial_number,
+    response.glossiness,
+    response.metallicness,
+    response.response_time_ms
+  from jsonb_to_recordset(p_repeat_responses) as response(
+    stimulus_id bigint,
+    trial_number smallint,
+    repeat_of_trial_number smallint,
+    glossiness smallint,
+    metallicness smallint,
+    response_time_ms integer
+  )
+  join public.session_assignments as a
+    on a.study_session_id = p_study_session_id
+   and a.stimulus_id = response.stimulus_id
+  on conflict (study_session_id, trial_number) do nothing;
+
+  get diagnostics v_repeat_inserted = row_count;
+  if v_repeat_inserted <> 6 then
+    raise exception 'Repeated responses do not match the assigned stimuli';
+  end if;
+
   update public.stimuli as s
   set
     reserved_labels = greatest(0, s.reserved_labels - 1),
@@ -400,6 +457,9 @@ $$;
 revoke execute on function public.claim_study_assignment(text, text, text, text, jsonb) from public;
 revoke execute on function public.claim_study_assignment(text, text, text, text) from anon;
 revoke execute on function public.submit_study_session(uuid, text, jsonb, jsonb) from public;
+revoke execute on function public.submit_study_session(uuid, text, jsonb, jsonb) from anon;
 revoke execute on function public.submit_study_session(uuid, text, jsonb) from public;
+revoke execute on function public.submit_study_session(uuid, text, jsonb) from anon;
+revoke execute on function public.submit_study_session(uuid, text, jsonb, jsonb, jsonb) from public;
 grant execute on function public.claim_study_assignment(text, text, text, text, jsonb) to anon;
-grant execute on function public.submit_study_session(uuid, text, jsonb, jsonb) to anon;
+grant execute on function public.submit_study_session(uuid, text, jsonb, jsonb, jsonb) to anon;

@@ -5,15 +5,18 @@ Static GitHub Pages build of the glossiness and metallicness perception study.
 The study constants are centralized in `src/study-config.ts`. Supabase assigns
 exactly 80 main-study stimuli per participant, balances every stimulus toward 10
 completed ratings, stores results server-side, and keeps the assigned order
-stable if a participant reloads. The four initial images are stored separately
-from the 80 main responses in the `initial_ratings` table. Gender, age,
+stable if a participant reloads. Six of those stimuli are repeated throughout
+the session to measure within-participant consistency, producing 90 total
+ratings (4 initial + 80 main + 6 repeated). The four initial images and six
+repeated responses are stored separately in `initial_ratings` and
+`repeated_ratings`. Gender, age,
 computer-graphics knowledge, design/3D-modeling experience, and artistic
 experience are stored once per participant in the `study_sessions` table.
 
 The application reads `PROLIFIC_PID`, `STUDY_ID`, and `SESSION_ID` from the URL.
 When those parameters are absent, a tab-scoped anonymous identifier is created
 so a normal direct run is still assigned and saved in Supabase. It requests the
-assignment as soon as the participant enters the tutorial and preloads all 84
+assignment as soon as the participant enters the tutorial and preloads all 90
 images before enabling the start button. The temporary Testing toggle runs
 4 + 10 bundled images locally, does not write to Supabase, and exposes the CSV
 download only on its final screen. Normal runs do not retain result data in the
