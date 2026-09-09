@@ -31,6 +31,20 @@ create table if not exists public.study_sessions (
   unique (participant_id, prolific_study_id)
 );
 
+alter table public.study_sessions
+  add column if not exists gender text
+    check (gender in ('male', 'female', 'other', 'prefer_not_to_answer')),
+  add column if not exists gender_other text
+    check (gender_other is null or length(gender_other) <= 80),
+  add column if not exists age smallint
+    check (age between 18 and 100),
+  add column if not exists computer_graphics_knowledge text
+    check (computer_graphics_knowledge in ('none', 'basic', 'intermediate', 'professional')),
+  add column if not exists design_modeling_experience text
+    check (design_modeling_experience in ('none', 'basic', 'intermediate', 'professional')),
+  add column if not exists artistic_experience text
+    check (artistic_experience in ('none', 'basic', 'intermediate', 'professional'));
+
 create table if not exists public.session_assignments (
   study_session_id uuid not null references public.study_sessions(id) on delete cascade,
   stimulus_id bigint not null references public.stimuli(id),
@@ -83,7 +97,8 @@ create or replace function public.claim_study_assignment(
   p_participant_id text,
   p_study_id text,
   p_prolific_session_id text,
-  p_attribute_order text
+  p_attribute_order text,
+  p_demographics jsonb
 )
 returns table (
   study_session_id uuid,
@@ -111,6 +126,37 @@ begin
     'metallicness_then_glossiness'
   ) then
     raise exception 'Invalid attribute order';
+  end if;
+
+  if jsonb_typeof(p_demographics) <> 'object' then
+    raise exception 'Invalid demographic responses';
+  end if;
+
+  if coalesce(p_demographics->>'gender', '') not in (
+       'male', 'female', 'other', 'prefer_not_to_answer'
+     )
+     or (
+       p_demographics->>'gender' = 'other'
+       and coalesce(length(trim(p_demographics->>'gender_other')), 0) = 0
+     )
+     or coalesce(p_demographics->>'computer_graphics_knowledge', '') not in (
+       'none', 'basic', 'intermediate', 'professional'
+     )
+     or coalesce(p_demographics->>'design_modeling_experience', '') not in (
+       'none', 'basic', 'intermediate', 'professional'
+     )
+     or coalesce(p_demographics->>'artistic_experience', '') not in (
+       'none', 'basic', 'intermediate', 'professional'
+     ) then
+    raise exception 'Invalid demographic responses';
+  end if;
+
+  if coalesce(p_demographics->>'age', '') !~ '^[0-9]+$' then
+    raise exception 'Invalid demographic responses';
+  end if;
+
+  if (p_demographics->>'age')::integer not between 18 and 100 then
+    raise exception 'Invalid demographic responses';
   end if;
 
   -- Release assignments from clearly abandoned sessions so that their
@@ -155,12 +201,24 @@ begin
       participant_id,
       prolific_study_id,
       prolific_session_id,
-      attribute_order
+      attribute_order,
+      gender,
+      gender_other,
+      age,
+      computer_graphics_knowledge,
+      design_modeling_experience,
+      artistic_experience
     ) values (
       p_participant_id,
       p_study_id,
       p_prolific_session_id,
-      p_attribute_order
+      p_attribute_order,
+      p_demographics->>'gender',
+      nullif(trim(p_demographics->>'gender_other'), ''),
+      (p_demographics->>'age')::smallint,
+      p_demographics->>'computer_graphics_knowledge',
+      p_demographics->>'design_modeling_experience',
+      p_demographics->>'artistic_experience'
     )
     returning id into v_study_session_id;
 
@@ -194,6 +252,18 @@ begin
     update public.stimuli as s
     set reserved_labels = s.reserved_labels + 1
     where s.id = any(v_stimulus_ids);
+  else
+    update public.study_sessions
+    set
+      gender = p_demographics->>'gender',
+      gender_other = nullif(trim(p_demographics->>'gender_other'), ''),
+      age = (p_demographics->>'age')::smallint,
+      computer_graphics_knowledge =
+        p_demographics->>'computer_graphics_knowledge',
+      design_modeling_experience =
+        p_demographics->>'design_modeling_experience',
+      artistic_experience = p_demographics->>'artistic_experience'
+    where id = v_study_session_id;
   end if;
 
   return query
@@ -327,8 +397,9 @@ begin
 end;
 $$;
 
-revoke execute on function public.claim_study_assignment(text, text, text, text) from public;
+revoke execute on function public.claim_study_assignment(text, text, text, text, jsonb) from public;
+revoke execute on function public.claim_study_assignment(text, text, text, text) from anon;
 revoke execute on function public.submit_study_session(uuid, text, jsonb, jsonb) from public;
 revoke execute on function public.submit_study_session(uuid, text, jsonb) from public;
-grant execute on function public.claim_study_assignment(text, text, text, text) to anon;
+grant execute on function public.claim_study_assignment(text, text, text, text, jsonb) to anon;
 grant execute on function public.submit_study_session(uuid, text, jsonb, jsonb) to anon;

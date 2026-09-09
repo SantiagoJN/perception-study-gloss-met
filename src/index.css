@@ -84,6 +84,7 @@
 .study-shell { min-height: 100svh; }
 
 .welcome-shell,
+.demographics-shell,
 .complete-shell {
   display: grid;
   place-items: center;
@@ -95,6 +96,7 @@
 }
 
 .welcome-card,
+.demographics-card,
 .complete-card {
   width: min(100%, 46rem);
   border: 1px solid oklch(0.87 0.025 260);
@@ -103,6 +105,109 @@
   box-shadow: 0 1.5rem 4.5rem oklch(0.24 0.05 264 / 11%);
   padding: clamp(1.5rem, 5vw, 3.4rem);
 }
+
+.demographics-card { width: min(100%, 58rem); }
+
+.inline-info-icon {
+  display: inline-block;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin: 0 0.12rem;
+  color: var(--primary);
+  vertical-align: -0.18rem;
+}
+
+.demographics-form {
+  display: grid;
+  gap: 1.5rem;
+  margin-top: 2rem;
+}
+
+.demographic-field {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.demographic-field legend,
+.demographic-text-field > span {
+  display: block;
+  margin-bottom: 0.65rem;
+  color: var(--foreground);
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.demographic-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.demographic-option {
+  display: flex;
+  min-height: 3.25rem;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  background: var(--card);
+  padding: 0.7rem 0.8rem;
+  font-size: 0.88rem;
+  line-height: 1.25;
+  cursor: pointer;
+  transition: border-color 150ms, background 150ms;
+}
+
+.demographic-option:hover {
+  border-color: oklch(0.66 0.11 266);
+  background: oklch(0.97 0.018 266);
+}
+
+.demographic-option:has([data-state='checked']) {
+  border-color: var(--primary);
+  background: oklch(0.94 0.04 268);
+  color: oklch(0.37 0.15 269);
+  font-weight: 700;
+}
+
+.demographic-text-field { display: block; }
+
+.demographic-text-field input {
+  width: 100%;
+  height: 3rem;
+  border: 1px solid var(--input);
+  border-radius: 0.7rem;
+  background: var(--card);
+  padding: 0 0.85rem;
+  color: var(--foreground);
+  font: inherit;
+}
+
+.demographic-text-field input:focus-visible {
+  border-color: var(--ring);
+  outline: 3px solid oklch(0.59 0.16 265 / 20%);
+}
+
+.demographic-text-field small {
+  display: block;
+  margin-top: 0.4rem;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+}
+
+.age-field { max-width: 13rem; }
+
+.demographics-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.demographics-actions button { min-height: 3rem; }
 
 .study-mark {
   display: flex;
@@ -873,6 +978,7 @@
 .image-lightbox span svg { width: 1rem; height: 1rem; }
 
 @media (max-width: 900px) {
+  .demographic-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .attribute-card { grid-template-columns: 1fr; }
   .attribute-copy { max-width: 42rem; }
   .trial-grid { grid-template-columns: 1fr; }
@@ -883,7 +989,11 @@
 
 @media (max-width: 600px) {
   .welcome-card,
+  .demographics-card,
   .complete-card { padding: 1.4rem; }
+  .demographic-options { grid-template-columns: 1fr; }
+  .demographics-actions { align-items: stretch; flex-direction: column-reverse; }
+  .demographics-actions button { width: 100%; }
   .attention-callout { grid-template-columns: 1fr; }
   .study-facts { grid-template-columns: 1fr 1fr; }
   .study-facts > div:last-child { grid-column: 1 / -1; }

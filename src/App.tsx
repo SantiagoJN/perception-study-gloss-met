@@ -109,6 +109,7 @@ async function preloadImages(
 type Attribute = 'glossiness' | 'metallicness';
 type Stage =
   | 'welcome'
+  | 'demographics'
   | 'explanation'
   | 'training'
   | 'study'
@@ -141,6 +142,62 @@ type ProlificMeta = {
   studyId: string;
   sessionId: string;
 };
+
+type Demographics = {
+  gender: string;
+  genderOther: string;
+  age: string;
+  computerGraphicsKnowledge: string;
+  designModelingExperience: string;
+  artisticExperience: string;
+};
+
+const EMPTY_DEMOGRAPHICS: Demographics = {
+  gender: '',
+  genderOther: '',
+  age: '',
+  computerGraphicsKnowledge: '',
+  designModelingExperience: '',
+  artisticExperience: '',
+};
+
+const EXPERIENCE_OPTIONS = [
+  { value: 'none', label: 'None' },
+  { value: 'basic', label: 'Basic' },
+  { value: 'intermediate', label: 'Intermediate' },
+  { value: 'professional', label: 'Professional' },
+];
+
+function DemographicChoice({
+  legend,
+  value,
+  options,
+  onChange,
+}: {
+  legend: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <fieldset className="demographic-field">
+      <legend>{legend}</legend>
+      <RadioGroup
+        aria-label={legend}
+        value={value}
+        onValueChange={onChange}
+        className="demographic-options"
+      >
+        {options.map((option) => (
+          <label key={option.value} className="demographic-option">
+            <RadioGroupItem value={option.value} />
+            <span>{option.label}</span>
+          </label>
+        ))}
+      </RadioGroup>
+    </fieldset>
+  );
+}
 
 function createAnonymousId() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -321,6 +378,7 @@ function downloadResults(
   studyRatings: Rating[],
   meta: ProlificMeta,
   attributeOrder: Attribute[],
+  demographics: Demographics,
 ) {
   const completedAt = new Date().toISOString();
   const glossinessFirst = attributeOrder[0] === 'glossiness';
@@ -335,6 +393,12 @@ function downloadResults(
     'metallicness',
     'attribute_order',
     'glossiness_first',
+    'gender',
+    'gender_other',
+    'age',
+    'computer_graphics_knowledge',
+    'design_modeling_experience',
+    'artistic_experience',
     'response_time_ms',
     'completed_at',
   ];
@@ -350,6 +414,12 @@ function downloadResults(
       rating.metallicness,
       attributeOrder[0] + '_then_' + attributeOrder[1],
       glossinessFirst,
+      demographics.gender,
+      demographics.gender === 'other' ? demographics.genderOther : '',
+      demographics.age,
+      demographics.computerGraphicsKnowledge,
+      demographics.designModelingExperience,
+      demographics.artisticExperience,
       rating.responseTimeMs,
       completedAt,
     ]
@@ -381,6 +451,9 @@ export default function Home() {
   const [showAttributeHelp, setShowAttributeHelp] = useState(false);
   const [expandedImage, setExpandedImage] = useState(false);
   const [testingMode, setTestingMode] = useState(false);
+  const [demographics, setDemographics] = useState<Demographics>(
+    EMPTY_DEMOGRAPHICS,
+  );
   const [starting, setStarting] = useState(false);
   const [studyPrepared, setStudyPrepared] = useState(false);
   const [preloadedCount, setPreloadedCount] = useState(0);
@@ -423,8 +496,19 @@ export default function Home() {
     ? TESTING_TRIAL_COUNT
     : STUDY_TRIAL_COUNT;
   const totalTrialCount = TRAINING_STIMULI.length + mainTrialCount;
+  const age = Number(demographics.age);
+  const demographicsComplete = Boolean(
+    demographics.gender &&
+      (demographics.gender !== 'other' || demographics.genderOther.trim()) &&
+      Number.isInteger(age) &&
+      age >= 18 &&
+      age <= 100 &&
+      demographics.computerGraphicsKnowledge &&
+      demographics.designModelingExperience &&
+      demographics.artisticExperience,
+  );
 
-  async function prepareStudy() {
+  async function prepareStudy(demographicData = demographics) {
     const runId = preloadRun.current + 1;
     preloadRun.current = runId;
     const firstAttribute: Attribute =
@@ -443,6 +527,19 @@ export default function Home() {
         : await claimStudyAssignment(
             meta,
             firstAttribute + '_then_' + secondAttribute,
+            {
+              gender: demographicData.gender,
+              gender_other:
+                demographicData.gender === 'other'
+                  ? demographicData.genderOther.trim()
+                  : null,
+              age: Number(demographicData.age),
+              computer_graphics_knowledge:
+                demographicData.computerGraphicsKnowledge,
+              design_modeling_experience:
+                demographicData.designModelingExperience,
+              artistic_experience: demographicData.artisticExperience,
+            },
           );
       const nextStudyRatings = assignment?.length
         ? assignment.map((item) => ({
@@ -491,10 +588,15 @@ export default function Home() {
     }
   }
 
+  function openDemographics() {
+    setStage('demographics');
+  }
+
   function openExplanation() {
+    if (!demographicsComplete) return;
     setExamplesRevealed(false);
     setStage('explanation');
-    void prepareStudy();
+    void prepareStudy(demographics);
   }
 
   function startStudy() {
@@ -504,14 +606,14 @@ export default function Home() {
     setStage('training');
   }
 
-  function returnToWelcome() {
+  function returnToDemographics() {
     preloadRun.current += 1;
     setStarting(false);
     setStudyPrepared(false);
     setPreloadedCount(0);
     setPreloadTotal(0);
     setStartError('');
-    setStage('welcome');
+    setStage('demographics');
   }
 
   function updateRating(field: Attribute, value: number) {
@@ -555,6 +657,7 @@ export default function Home() {
           meta,
           attributeOrder,
           testingMode,
+          demographics,
           glossinessFirst: attributeOrder[0] === 'glossiness',
           trainingRatings,
           studyRatings: nextRatings,
@@ -654,7 +757,7 @@ export default function Home() {
           name: 'start_material_study',
           title: 'Continue material study',
           description:
-            'Move from consent to the instructions, or start the study after the instructions.',
+            'Move from consent to demographics, continue to the instructions, or start the study after the instructions.',
           inputSchema: {
             type: 'object',
             properties: {},
@@ -669,6 +772,15 @@ export default function Home() {
               if (!consented) {
                 throw new Error(
                   'Consent must be accepted before continuing.',
+                );
+              }
+              openDemographics();
+              return { stage: 'demographics' };
+            }
+            if (stage === 'demographics') {
+              if (!demographicsComplete) {
+                throw new Error(
+                  'The demographic questionnaire must be completed manually.',
                 );
               }
               openExplanation();
@@ -698,6 +810,7 @@ export default function Home() {
     attributeOrder,
     completedInPhase,
     consented,
+    demographicsComplete,
     index,
     stage,
     testingMode,
@@ -773,6 +886,20 @@ export default function Home() {
                 Click any material image to enlarge it, then click it again to
                 return.
               </li>
+              <li>
+                We have <strong>control questions</strong> throughout the test
+                that will detect random answers or inattentive users. Please
+                make sure you <strong>pay attention during the test</strong>.
+              </li>
+              <li>
+                Descriptions of visual features are available by clicking on
+                the info icon{' '}
+                <CircleHelp
+                  className="inline-info-icon"
+                  aria-label="Information"
+                />{' '}
+                next to the title.
+              </li>
             </ul>
           </div>
 
@@ -793,10 +920,129 @@ export default function Home() {
             size="lg"
             className="primary-action"
             disabled={!consented}
-            onClick={openExplanation}
+            onClick={openDemographics}
           >
-            Continue to instructions <ArrowRight data-icon="inline-end" />
+            Continue <ArrowRight data-icon="inline-end" />
           </Button>
+        </section>
+      </main>
+    );
+  }
+
+  if (stage === 'demographics') {
+    return (
+      <main className="study-shell demographics-shell">
+        <section className="welcome-card demographics-card" aria-labelledby="demographics-title">
+          <p className="eyebrow">About you</p>
+          <h1 id="demographics-title">Demographic information</h1>
+          <p className="lead">
+            Please tell us a little about yourself. These responses will be
+            stored anonymously and used only for academic analysis.
+          </p>
+
+          <div className="demographics-form">
+            <DemographicChoice
+              legend="Gender"
+              value={demographics.gender}
+              options={[
+                { value: 'male', label: 'Male' },
+                { value: 'female', label: 'Female' },
+                { value: 'other', label: 'Other (specify)' },
+                { value: 'prefer_not_to_answer', label: 'Prefer not to answer' },
+              ]}
+              onChange={(gender) =>
+                setDemographics((current) => ({ ...current, gender }))
+              }
+            />
+            {demographics.gender === 'other' ? (
+              <label className="demographic-text-field">
+                <span>Please specify</span>
+                <input
+                  type="text"
+                  value={demographics.genderOther}
+                  maxLength={80}
+                  autoComplete="off"
+                  onChange={(event) =>
+                    setDemographics((current) => ({
+                      ...current,
+                      genderOther: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+            ) : null}
+
+            <label className="demographic-text-field age-field">
+              <span>Age</span>
+              <input
+                type="number"
+                min="18"
+                max="100"
+                inputMode="numeric"
+                value={demographics.age}
+                onChange={(event) =>
+                  setDemographics((current) => ({
+                    ...current,
+                    age: event.target.value,
+                  }))
+                }
+              />
+              <small>Enter an age between 18 and 100.</small>
+            </label>
+
+            <DemographicChoice
+              legend="Knowledge of computer graphics"
+              value={demographics.computerGraphicsKnowledge}
+              options={EXPERIENCE_OPTIONS}
+              onChange={(computerGraphicsKnowledge) =>
+                setDemographics((current) => ({
+                  ...current,
+                  computerGraphicsKnowledge,
+                }))
+              }
+            />
+            <DemographicChoice
+              legend="Experience with design or 3D modeling software"
+              value={demographics.designModelingExperience}
+              options={EXPERIENCE_OPTIONS}
+              onChange={(designModelingExperience) =>
+                setDemographics((current) => ({
+                  ...current,
+                  designModelingExperience,
+                }))
+              }
+            />
+            <DemographicChoice
+              legend="Artistic experience or knowledge"
+              value={demographics.artisticExperience}
+              options={EXPERIENCE_OPTIONS}
+              onChange={(artisticExperience) =>
+                setDemographics((current) => ({
+                  ...current,
+                  artisticExperience,
+                }))
+              }
+            />
+          </div>
+
+          <div className="demographics-actions">
+            <Button
+              type="button"
+              size="lg"
+              variant="ghost"
+              onClick={() => setStage('welcome')}
+            >
+              <ArrowLeft data-icon="inline-start" /> Back
+            </Button>
+            <Button
+              type="button"
+              size="lg"
+              disabled={!demographicsComplete}
+              onClick={openExplanation}
+            >
+              Continue to instructions <ArrowRight data-icon="inline-end" />
+            </Button>
+          </div>
         </section>
       </main>
     );
@@ -871,7 +1117,7 @@ export default function Home() {
               <Button
                 variant="ghost"
                 size="lg"
-                onClick={returnToWelcome}
+                onClick={returnToDemographics}
               >
                 <ArrowLeft data-icon="inline-start" /> Back
               </Button>
@@ -934,6 +1180,7 @@ export default function Home() {
                     studyRatings,
                     meta,
                     attributeOrder,
+                    demographics,
                   )
                 }
               >

@@ -4,6 +4,15 @@ export type ProlificIdentifiers = {
   sessionId: string;
 };
 
+export type StudyDemographics = {
+  gender: string;
+  gender_other: string | null;
+  age: number;
+  computer_graphics_knowledge: string;
+  design_modeling_experience: string;
+  artistic_experience: string;
+};
+
 export type AssignedStimulus = {
   study_session_id: string;
   stimulus_id: number;
@@ -64,6 +73,7 @@ async function callRpc<T>(name: string, body: Record<string, unknown>) {
 export async function claimStudyAssignment(
   identifiers: ProlificIdentifiers,
   attributeOrder: string,
+  demographics: StudyDemographics,
 ) {
   const { enabled } = runtimeConfig();
   if (!enabled || !identifiers.participantId || !identifiers.sessionId) {
@@ -74,6 +84,7 @@ export async function claimStudyAssignment(
     p_study_id: identifiers.studyId,
     p_prolific_session_id: identifiers.sessionId,
     p_attribute_order: attributeOrder,
+    p_demographics: demographics,
   });
 }
 
