@@ -29,7 +29,8 @@ foreach ($row in $rows) {
     try {
       New-Item -ItemType HardLink -Path $target -Target $source | Out-Null
     } catch {
-      throw "Could not create a hard link for $source. Hard links are unavailable on mapped/network filesystems such as SSHFS. Use upload_cloudflare_stimuli.ps1 instead."
+      $reason = $_.Exception.Message
+      throw "Could not create a hard link for $source. Windows reported: $reason. On mapped/network filesystems such as SSHFS, use upload_cloudflare_stimuli.ps1 instead."
     }
   }
 }
