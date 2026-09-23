@@ -1,0 +1,8 @@
+{
+  "source": "mining_pairs_v2/selection/pairs_selected_complete.csv",
+  "pair_count": 2400,
+  "reference_set_count": 1200,
+  "skipped_selected_reference_pairs": 64,
+  "pair_seed_sha256": "4d7c7614df0f7ade2214aee65c305e4bf0d478a3d848bbfd049f18cd57a2f095",
+  "reference_seed_sha256": "c1494783d961dc4348d90a8b2a94887e9e6c7b84d64be29a92dec120ac39db1e"
+}

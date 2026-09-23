@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -10,7 +10,6 @@ import {
   Eye,
   FlaskConical,
   LoaderCircle,
-  Minimize2,
   Monitor,
   ZoomIn,
 } from 'lucide-react';
@@ -19,173 +18,36 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Progress } from '@/components/ui/progress';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { MAIN_RATINGS_PER_SESSION } from '@/study-config';
 import {
-  claimStudyAssignment,
-  submitStudySession,
+  claimConstancySession,
+  submitConstancySession,
+  type ClaimedSession,
+  type PairAssignment,
+  type ProlificIdentifiers,
+  type ReferenceAssignment,
 } from '@/supabase';
 
-const BASE_STIMULI = [
-  'Ceramic__0330_marble_wall_01.png',
-  'Ceramic__0974_arcane_arabesque_patterns.png',
-  'Ceramic__cgbc_blue_tiles_001.png',
-  'Ceramic__tc_tiles_085.png',
-  'Fabric__0265_fabric_padded_wall.png',
-  'Fabric__0266_fabric_padded_wall.png',
-  'Fabric__acg_fabric_058.png',
-  'Fabric__js_fabric_pattern_006.png',
-  'Metal__0361_metal_brushed_copper.png',
-  'Metal__acg_metal_016.png',
-  'Metal__cgbc_metal_weave_002.png',
-];
-
-const STUDY_TRIAL_COUNT = MAIN_RATINGS_PER_SESSION;
-const STIMULI = Array.from(
-  { length: STUDY_TRIAL_COUNT },
-  (_, index) => BASE_STIMULI[index % BASE_STIMULI.length],
-);
-
-const TRAINING_STIMULI = [
-  'g0m0_[3_3_ninomaru_teien_2k_shift_200][sphere][MERL_EDIT-beige-fabric_hue_0_sat_1_spec_1].jpg',
-  'g0m1_[3_3_ninomaru_teien_2k_shift_200][sphere][MERL-blue-metallic-paint].jpg',
-  'g1m0_[3_3_ninomaru_teien_2k_shift_200][sphere][MERL_EDIT-beige-fabric_diff_mix_white-paint_spec_hue_0_sat_1_spec_0].jpg',
-  'g1m1_[3_3_ninomaru_teien_2k_shift_200][sphere][RGL-chm_orange_rgb].jpg',
-];
-const TESTING_TRIAL_COUNT = 10;
-const REPEATED_TRIAL_COUNT = 6;
-const REPEAT_AFTER_BASE_TRIALS = [12, 25, 38, 51, 64, 77];
-
-const SCALE = [1, 2, 3, 4, 5, 6, 7];
+const PAIR_TRIALS_PER_SESSION = 40;
+const REFERENCE_TRIALS_PER_SESSION = 20;
+const TEST_PAIR_TRIALS = 4;
+const TEST_REFERENCE_TRIALS = 2;
 const ASSET_BASE = import.meta.env.BASE_URL;
 
-function assetUrl(path: string) {
-  return ASSET_BASE + path.replace(/^\/+/, '');
-}
+type Stage = 'welcome' | 'demographics' | 'tutorial' | 'study' | 'complete';
+type RelativeChoice = 'a' | 'same' | 'b' | '';
 
-function encodeAssetPath(path: string) {
-  return path
-    .split('/')
-    .filter(Boolean)
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
-}
-
-function studyImageUrl(path: string) {
-  if (/^https?:\/\//i.test(path)) return path;
-  const baseUrl = window.USER_STUDY_CONFIG?.stimulusBaseUrl
-    ?.trim()
-    .replace(/\/$/, '');
-  if (baseUrl) {
-    const relativePath = path.replace(/^\/+/, '').replace(/^stimuli\//, '');
-    return baseUrl + '/' + encodeAssetPath(relativePath);
-  }
-  const relativePath = path.startsWith('stimuli/') ? path : 'stimuli/' + path;
-  return assetUrl(encodeAssetPath(relativePath));
-}
-
-async function preloadImages(
-  urls: string[],
-  onProgress: (loaded: number) => void,
-) {
-  let nextIndex = 0;
-  let loaded = 0;
-  const workerCount = Math.min(6, urls.length);
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (nextIndex < urls.length) {
-      const url = urls[nextIndex];
-      nextIndex += 1;
-      await new Promise<void>((resolve, reject) => {
-        const image = new Image();
-        image.decoding = 'async';
-        image.onload = () => resolve();
-        image.onerror = () => reject(new Error('Image preload failed'));
-        image.src = url;
-      });
-      loaded += 1;
-      onProgress(loaded);
-    }
-  });
-  await Promise.all(workers);
-}
-
-type Attribute = 'glossiness' | 'metallicness';
-type Stage =
-  | 'welcome'
-  | 'demographics'
-  | 'explanation'
-  | 'training'
-  | 'study'
-  | 'complete';
-type Phase = 'training' | 'study';
-
-type Rating = {
-  stimulus: string;
-  stimulusId?: number;
-  imagePath?: string;
-  phase: Phase;
-  trialNumber: number;
-  glossiness: number | null;
-  metallicness: number | null;
-  responseTimeMs?: number;
-  assignmentTrialNumber?: number;
-  isRepeat?: boolean;
-  repeatOfTrialNumber?: number;
-};
-
-function addRepeatedRatings(ratings: Rating[]) {
-  const presented: Rating[] = [];
-  const repeatedStimulusIds = new Set<number>();
-
-  ratings.forEach((rating, baseIndex) => {
-    const original: Rating = {
-      ...rating,
-      assignmentTrialNumber: rating.trialNumber,
-      trialNumber: presented.length + 1,
-      isRepeat: false,
-    };
-    presented.push(original);
-
-    if (!REPEAT_AFTER_BASE_TRIALS.includes(baseIndex + 1)) return;
-    const candidates = presented.filter(
-      (candidate) =>
-        !candidate.isRepeat &&
-        candidate.stimulusId !== undefined &&
-        !repeatedStimulusIds.has(candidate.stimulusId),
-    );
-    const source = candidates[Math.floor(Math.random() * candidates.length)];
-    if (!source || source.stimulusId === undefined) return;
-    repeatedStimulusIds.add(source.stimulusId);
-    presented.push({
-      ...source,
-      trialNumber: presented.length + 1,
-      glossiness: null,
-      metallicness: null,
-      responseTimeMs: undefined,
-      isRepeat: true,
-      repeatOfTrialNumber: source.trialNumber,
-    });
-  });
-
-  if (repeatedStimulusIds.size !== REPEATED_TRIAL_COUNT) {
-    throw new Error('The repeated study images could not be prepared.');
-  }
-  return presented;
-}
-
-function ratingImageUrl(rating: Rating) {
-  if (rating.phase === 'training') {
-    return assetUrl('training/' + encodeAssetPath(rating.stimulus));
-  }
-  if (rating.stimulusId !== undefined && rating.imagePath) {
-    return studyImageUrl(rating.imagePath);
-  }
-  return assetUrl('stimuli/' + encodeAssetPath(rating.stimulus));
-}
-
-type ProlificMeta = {
-  participantId: string;
-  studyId: string;
-  sessionId: string;
+type ModelContext = {
+  registerTool: (
+    tool: {
+      name: string;
+      title: string;
+      description: string;
+      inputSchema: Record<string, unknown>;
+      annotations: { readOnlyHint: boolean; untrustedContentHint: boolean };
+      execute: () => unknown;
+    },
+    options?: { signal: AbortSignal },
+  ) => void | Promise<void>;
 };
 
 type Demographics = {
@@ -195,6 +57,44 @@ type Demographics = {
   computerGraphicsKnowledge: string;
   designModelingExperience: string;
   artisticExperience: string;
+};
+
+type PairTrial = {
+  type: 'pair';
+  pairId: string;
+  canonicalPathA: string;
+  canonicalPathB: string;
+  displayPathA: string;
+  displayPathB: string;
+  swapped: boolean;
+  sameMaterialLikelihood: number | null;
+  glossChoice: RelativeChoice;
+  metalChoice: RelativeChoice;
+  responseTimeMs?: number;
+};
+
+type ReferenceTrial = {
+  type: 'reference';
+  referenceId: string;
+  referencePath: string;
+  candidateOrder: string[];
+  selectedCandidatePath: string;
+  responseTimeMs?: number;
+};
+
+type Trial = PairTrial | ReferenceTrial;
+
+type PreviewManifest = {
+  pairs: Array<{
+    pair_id: string;
+    image_path_a: string;
+    image_path_b: string;
+  }>;
+  references: Array<{
+    reference_id: string;
+    reference_path: string;
+    candidate_paths: string[];
+  }>;
 };
 
 const EMPTY_DEMOGRAPHICS: Demographics = {
@@ -213,6 +113,130 @@ const EXPERIENCE_OPTIONS = [
   { value: 'professional', label: 'Professional' },
 ];
 
+const IDENTITY_OPTIONS = [
+  { value: 1, label: 'Definitely same' },
+  { value: 2, label: 'Probably same' },
+  { value: 3, label: 'Unsure' },
+  { value: 4, label: 'Probably different' },
+  { value: 5, label: 'Definitely different' },
+];
+
+function shuffle<T>(items: T[]) {
+  const output = [...items];
+  for (let index = output.length - 1; index > 0; index -= 1) {
+    const other = Math.floor(Math.random() * (index + 1));
+    [output[index], output[other]] = [output[other], output[index]];
+  }
+  return output;
+}
+
+function assetUrl(path: string) {
+  return ASSET_BASE + path.replace(/^\/+/, '');
+}
+
+function encodeAssetPath(path: string) {
+  return path
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+function stimulusUrl(path: string) {
+  if (/^https?:\/\//i.test(path)) return path;
+  const base = window.USER_STUDY_CONFIG?.stimulusBaseUrl
+    ?.trim()
+    .replace(/\/$/, '');
+  if (!base) return assetUrl(encodeAssetPath(path));
+  return `${base}/${encodeAssetPath(path)}`;
+}
+
+function createAnonymousId() {
+  return typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function readStudyMetadata(): ProlificIdentifiers {
+  const params = new URLSearchParams(window.location.search);
+  const participantId = params.get('PROLIFIC_PID')?.trim();
+  const sessionId = params.get('SESSION_ID')?.trim();
+  if (participantId && sessionId) {
+    return {
+      participantId,
+      studyId: params.get('STUDY_ID')?.trim() || 'prolific-study',
+      sessionId,
+    };
+  }
+  const key = 'material-constancy-direct-session';
+  let directId = sessionStorage.getItem(key);
+  if (!directId) {
+    directId = createAnonymousId();
+    sessionStorage.setItem(key, directId);
+  }
+  return {
+    participantId: `direct-${directId}`,
+    studyId: 'direct-web',
+    sessionId: directId,
+  };
+}
+
+async function preloadImages(urls: string[], onProgress: (count: number) => void) {
+  const unique = [...new Set(urls)];
+  let next = 0;
+  let loaded = 0;
+  const workers = Array.from({ length: Math.min(8, unique.length) }, async () => {
+    while (next < unique.length) {
+      const url = unique[next];
+      next += 1;
+      await new Promise<void>((resolve, reject) => {
+        const image = new Image();
+        image.decoding = 'async';
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error(`Could not preload ${url}`));
+        image.src = url;
+      });
+      loaded += 1;
+      onProgress(loaded);
+    }
+  });
+  await Promise.all(workers);
+  return unique.length;
+}
+
+function pairTrialFromAssignment(item: PairAssignment): PairTrial {
+  const swapped = item.swap_ab;
+  return {
+    type: 'pair',
+    pairId: item.pair_id,
+    canonicalPathA: item.image_path_a,
+    canonicalPathB: item.image_path_b,
+    displayPathA: swapped ? item.image_path_b : item.image_path_a,
+    displayPathB: swapped ? item.image_path_a : item.image_path_b,
+    swapped,
+    sameMaterialLikelihood: null,
+    glossChoice: '',
+    metalChoice: '',
+  };
+}
+
+function referenceTrialFromAssignment(item: ReferenceAssignment): ReferenceTrial {
+  return {
+    type: 'reference',
+    referenceId: item.reference_id,
+    referencePath: item.reference_path,
+    candidateOrder: item.candidate_order,
+    selectedCandidatePath: '',
+  };
+}
+
+function buildTrials(claimed: ClaimedSession) {
+  return shuffle([
+    ...shuffle(claimed.pair_trials).map(pairTrialFromAssignment),
+    ...shuffle(claimed.reference_trials).map(referenceTrialFromAssignment),
+  ]);
+}
+
 function DemographicChoice({
   legend,
   value,
@@ -221,7 +245,7 @@ function DemographicChoice({
 }: {
   legend: string;
   value: string;
-  options: { value: string; label: string }[];
+  options: Array<{ value: string; label: string }>;
   onChange: (value: string) => void;
 }) {
   return (
@@ -244,312 +268,85 @@ function DemographicChoice({
   );
 }
 
-function createAnonymousId() {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
-}
-
-function readStudyMetadata(): ProlificMeta {
-  const params = new URLSearchParams(window.location.search);
-  const prolificParticipantId = params.get('PROLIFIC_PID')?.trim();
-  const prolificSessionId = params.get('SESSION_ID')?.trim();
-  if (prolificParticipantId && prolificSessionId) {
-    return {
-      participantId: prolificParticipantId,
-      studyId: params.get('STUDY_ID')?.trim() || 'prolific-study',
-      sessionId: prolificSessionId,
-    };
-  }
-
-  const storageKey = 'material-perception-direct-session';
-  let directSessionId = sessionStorage.getItem(storageKey);
-  if (!directSessionId) {
-    directSessionId = createAnonymousId();
-    sessionStorage.setItem(storageKey, directSessionId);
-  }
-  return {
-    participantId: 'direct-' + directSessionId,
-    studyId: 'direct-web',
-    sessionId: directSessionId,
-  };
-}
-
-type ModelContext = {
-  registerTool: (
-    tool: {
-      name: string;
-      title: string;
-      description: string;
-      inputSchema: Record<string, unknown>;
-      annotations: { readOnlyHint: boolean; untrustedContentHint: boolean };
-      execute: () => unknown;
-    },
-    options?: { signal: AbortSignal },
-  ) => void | Promise<void>;
-};
-
-const ATTRIBUTE_COPY: Record<
-  Attribute,
-  { question: string; emphasis: string; left: string; right: string }
-> = {
-  glossiness: {
-    question: 'How glossy does the material appear?',
-    emphasis: 'glossy',
-    left: '1 · Not glossy at all',
-    right: '7 · Extremely glossy',
-  },
-  metallicness: {
-    question: 'How metallic does the material appear?',
-    emphasis: 'metallic',
-    left: '1 · Not metallic at all',
-    right: '7 · Extremely metallic',
-  },
-};
-
-function shuffle<T>(items: T[]) {
-  const copy = [...items];
-  for (let index = copy.length - 1; index > 0; index -= 1) {
-    const target = Math.floor(Math.random() * (index + 1));
-    [copy[index], copy[target]] = [copy[target], copy[index]];
-  }
-  return copy;
-}
-
-function makeRatings(stimuli: string[], phase: Phase): Rating[] {
-  return stimuli.map((stimulus, trialIndex) => ({
-    stimulus,
-    phase,
-    trialNumber: trialIndex + 1,
-    glossiness: null,
-    metallicness: null,
-  }));
-}
-
-function ScaleQuestion({
+function RelativeQuestion({
   attribute,
   value,
   onChange,
 }: {
-  attribute: Attribute;
-  value: number | null;
-  onChange: (value: number) => void;
+  attribute: 'glossier' | 'more metallic';
+  value: RelativeChoice;
+  onChange: (value: RelativeChoice) => void;
 }) {
-  const copy = ATTRIBUTE_COPY[attribute];
-  const [beforeEmphasis, afterEmphasis] = copy.question.split(copy.emphasis);
   return (
-    <fieldset className="rating-question">
+    <fieldset className="pair-question">
       <legend>
-        {beforeEmphasis}
-        <span className="attribute-term">{copy.emphasis}</span>
-        {afterEmphasis}
+        Which surface appears <strong>{attribute}</strong>?
       </legend>
       <RadioGroup
-        aria-label={copy.question}
-        value={value?.toString() ?? ''}
-        onValueChange={(nextValue) => onChange(Number(nextValue))}
-        className="rating-scale"
+        value={value}
+        onValueChange={(next) => onChange(next as RelativeChoice)}
+        className="three-choice-scale"
+        aria-label={`Which surface appears ${attribute}?`}
       >
-        {SCALE.map((point) => (
-          <label key={point} className="rating-option">
-            <RadioGroupItem
-              value={point.toString()}
-              aria-label={point + ' out of 7'}
-            />
-            <span>{point}</span>
+        {[
+          { value: 'a', label: 'A' },
+          { value: 'same', label: 'Approximately same' },
+          { value: 'b', label: 'B' },
+        ].map((option) => (
+          <label className="scale-choice" key={option.value}>
+            <RadioGroupItem value={option.value} />
+            <span>{option.label}</span>
           </label>
         ))}
       </RadioGroup>
-      <div className="scale-labels" aria-hidden="true">
-        <span>{copy.left}</span>
-        <span>{copy.right}</span>
-      </div>
     </fieldset>
   );
 }
 
-function ExamplePair({
-  attribute,
-  description,
-  lowImage,
-  highImage,
-  cue,
-}: {
-  attribute: string;
-  description: string;
-  lowImage: string;
-  highImage: string;
-  cue: string;
-}) {
-  return (
-    <article className="attribute-card">
-      <div className="attribute-copy">
-        <p className="eyebrow">Visual attribute</p>
-        <h2>{attribute}</h2>
-        <p>{description}</p>
-        <p className="cue">
-          <Eye aria-hidden="true" />
-          <span>
-            <strong>Look for:</strong> {cue}
-          </span>
-        </p>
-      </div>
-      <div className="example-comparison">
-        <figure>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={lowImage}
-            alt={'Example with low ' + attribute.toLowerCase()}
-          />
-          <figcaption><span>1</span> Low</figcaption>
-        </figure>
-        <div className="comparison-arrow" aria-hidden="true"><ArrowRight /></div>
-        <figure>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={highImage}
-            alt={'Example with high ' + attribute.toLowerCase()}
-          />
-          <figcaption><span>7</span> High</figcaption>
-        </figure>
-      </div>
-    </article>
-  );
-}
-
-function downloadResults(
-  trainingRatings: Rating[],
-  studyRatings: Rating[],
-  meta: ProlificMeta,
-  attributeOrder: Attribute[],
+function downloadTestingData(
+  trials: Trial[],
   demographics: Demographics,
+  metadata: ProlificIdentifiers,
 ) {
-  const completedAt = new Date().toISOString();
-  const glossinessFirst = attributeOrder[0] === 'glossiness';
-  const header = [
-    'participant_id',
-    'study_id',
-    'session_id',
-    'phase',
-    'trial_number',
-    'stimulus',
-    'glossiness',
-    'metallicness',
-    'attribute_order',
-    'glossiness_first',
-    'is_repeat',
-    'repeat_of_trial_number',
-    'assignment_trial_number',
-    'gender',
-    'gender_other',
-    'age',
-    'computer_graphics_knowledge',
-    'design_modeling_experience',
-    'artistic_experience',
-    'response_time_ms',
-    'completed_at',
-  ];
-  const rows = [...trainingRatings, ...studyRatings].map((rating) =>
-    [
-      meta.participantId || 'preview',
-      meta.studyId || 'preview',
-      meta.sessionId || 'preview',
-      rating.phase,
-      rating.trialNumber,
-      rating.stimulus,
-      rating.glossiness,
-      rating.metallicness,
-      attributeOrder[0] + '_then_' + attributeOrder[1],
-      glossinessFirst,
-      Boolean(rating.isRepeat),
-      rating.repeatOfTrialNumber ?? '',
-      rating.assignmentTrialNumber ?? '',
-      demographics.gender,
-      demographics.gender === 'other' ? demographics.genderOther : '',
-      demographics.age,
-      demographics.computerGraphicsKnowledge,
-      demographics.designModelingExperience,
-      demographics.artisticExperience,
-      rating.responseTimeMs,
-      completedAt,
-    ]
-      .map((cell) => '"' + String(cell ?? '').replaceAll('"', '""') + '"')
-      .join(','),
-  );
-  const blob = new Blob([[header.join(','), ...rows].join('\n')], {
-    type: 'text/csv;charset=utf-8',
+  const payload = {
+    metadata,
+    demographics,
+    completedAt: new Date().toISOString(),
+    trials,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: 'application/json',
   });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download =
-    'material-ratings-' + (meta.participantId || 'preview') + '.csv';
+  link.download = 'material-constancy-test.json';
   document.body.appendChild(link);
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export default function Home() {
+export default function App() {
   const [stage, setStage] = useState<Stage>('welcome');
   const [consented, setConsented] = useState(false);
-  const [examplesRevealed, setExamplesRevealed] = useState(false);
-  const [attributeOrder, setAttributeOrder] = useState<Attribute[]>([]);
-  const [trainingRatings, setTrainingRatings] = useState<Rating[]>([]);
-  const [studyRatings, setStudyRatings] = useState<Rating[]>([]);
-  const [index, setIndex] = useState(0);
-  const [showAttributeHelp, setShowAttributeHelp] = useState(false);
-  const [expandedImage, setExpandedImage] = useState(false);
   const [testingMode, setTestingMode] = useState(false);
-  const [demographics, setDemographics] = useState<Demographics>(
-    EMPTY_DEMOGRAPHICS,
-  );
-  const [starting, setStarting] = useState(false);
-  const [studyPrepared, setStudyPrepared] = useState(false);
-  const [preloadedCount, setPreloadedCount] = useState(0);
+  const [demographics, setDemographics] = useState(EMPTY_DEMOGRAPHICS);
+  const [trials, setTrials] = useState<Trial[]>([]);
+  const [index, setIndex] = useState(0);
+  const [studySessionId, setStudySessionId] = useState('');
+  const [preparing, setPreparing] = useState(false);
+  const [prepared, setPrepared] = useState(false);
+  const [preloaded, setPreloaded] = useState(0);
   const [preloadTotal, setPreloadTotal] = useState(0);
-  const [startError, setStartError] = useState('');
+  const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState('');
-  const [remoteSessionId, setRemoteSessionId] = useState('');
-  const [meta] = useState<ProlificMeta>(readStudyMetadata);
+  const [showHelp, setShowHelp] = useState(false);
+  const [lightboxPath, setLightboxPath] = useState('');
+  const metadata = useMemo(readStudyMetadata, []);
   const trialStartedAt = useRef(0);
-  const preloadRun = useRef(0);
+  const preparationRun = useRef(0);
 
-  useEffect(() => {
-    if (!expandedImage) return;
-    const previousOverflow = document.body.style.overflow;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setExpandedImage(false);
-    };
-    document.body.style.overflow = 'hidden';
-    window.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [expandedImage]);
-
-  const isTraining = stage === 'training';
-  const activeRatings = isTraining ? trainingRatings : studyRatings;
-  const current = activeRatings[index];
-  const completedInPhase = activeRatings.filter(
-    (rating) =>
-      rating.glossiness !== null && rating.metallicness !== null,
-  ).length;
-  const canContinue = Boolean(
-    current &&
-      current.glossiness !== null &&
-      current.metallicness !== null,
-  );
-  const mainTrialCount = testingMode
-    ? TESTING_TRIAL_COUNT
-    : STUDY_TRIAL_COUNT;
-  const presentedStudyCount = testingMode
-    ? mainTrialCount
-    : mainTrialCount + REPEATED_TRIAL_COUNT;
-  const totalTrialCount = TRAINING_STIMULI.length + presentedStudyCount;
   const age = Number(demographics.age);
   const demographicsComplete = Boolean(
     demographics.gender &&
@@ -561,309 +358,238 @@ export default function Home() {
       demographics.designModelingExperience &&
       demographics.artisticExperience,
   );
+  const expectedTrials = testingMode
+    ? TEST_PAIR_TRIALS + TEST_REFERENCE_TRIALS
+    : PAIR_TRIALS_PER_SESSION + REFERENCE_TRIALS_PER_SESSION;
+  const current = trials[index];
+  const currentComplete = current
+    ? current.type === 'pair'
+      ? current.sameMaterialLikelihood !== null &&
+        current.glossChoice !== '' &&
+        current.metalChoice !== ''
+      : Boolean(current.selectedCandidatePath)
+    : false;
 
-  async function prepareStudy(demographicData = demographics) {
-    const runId = preloadRun.current + 1;
-    preloadRun.current = runId;
-    const firstAttribute: Attribute =
-      Math.random() < 0.5 ? 'glossiness' : 'metallicness';
-    const secondAttribute: Attribute =
-      firstAttribute === 'glossiness' ? 'metallicness' : 'glossiness';
-    const nextOrder = [firstAttribute, secondAttribute];
-    setStarting(true);
-    setStudyPrepared(false);
-    setPreloadedCount(0);
-    setPreloadTotal(0);
-    setStartError('');
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [stage]);
+
+  useEffect(() => {
+    if (!lightboxPath) return;
+    const previous = document.body.style.overflow;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setLightboxPath('');
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previous;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [lightboxPath]);
+
+  async function prepareStudy() {
+    const run = preparationRun.current + 1;
+    preparationRun.current = run;
+    setPreparing(true);
+    setPrepared(false);
+    setError('');
+    setPreloaded(0);
     try {
-      const assignment = testingMode
-        ? null
-        : await claimStudyAssignment(
-            meta,
-            firstAttribute + '_then_' + secondAttribute,
-            {
-              gender: demographicData.gender,
-              gender_other:
-                demographicData.gender === 'other'
-                  ? demographicData.genderOther.trim()
-                  : null,
-              age: Number(demographicData.age),
-              computer_graphics_knowledge:
-                demographicData.computerGraphicsKnowledge,
-              design_modeling_experience:
-                demographicData.designModelingExperience,
-              artistic_experience: demographicData.artisticExperience,
-            },
-          );
-      const baseStudyRatings: Rating[] = assignment?.length
-        ? assignment.map((item) => ({
-            stimulus: item.file_name,
-            stimulusId: item.stimulus_id,
-            imagePath: item.public_path,
-            phase: 'study' as const,
-            trialNumber: item.trial_number,
-            glossiness: null,
-            metallicness: null,
-          }))
-        : makeRatings(
-            shuffle(STIMULI).slice(0, mainTrialCount),
-            'study',
-          );
-      if (assignment?.length && assignment.length !== STUDY_TRIAL_COUNT) {
-        throw new Error('The server did not return exactly 80 images.');
+      let claimed: ClaimedSession;
+      if (testingMode) {
+        const response = await fetch(assetUrl('constancy_preview.json'));
+        if (!response.ok) throw new Error('Preview manifest unavailable.');
+        const preview = (await response.json()) as PreviewManifest;
+        claimed = {
+          study_session_id: 'testing',
+          pair_trials: preview.pairs.slice(0, TEST_PAIR_TRIALS).map((pair, trial) => ({
+            pair_id: pair.pair_id,
+            trial_number: trial + 1,
+            swap_ab: Math.random() < 0.5,
+            image_path_a: pair.image_path_a,
+            image_path_b: pair.image_path_b,
+          })),
+          reference_trials: preview.references
+            .slice(0, TEST_REFERENCE_TRIALS)
+            .map((reference, trial) => ({
+              reference_id: reference.reference_id,
+              reference_path: reference.reference_path,
+              candidate_order: shuffle(reference.candidate_paths),
+              trial_number: trial + 1,
+            })),
+        };
+      } else {
+        claimed = await claimConstancySession(metadata, {
+          gender: demographics.gender,
+          gender_other:
+            demographics.gender === 'other'
+              ? demographics.genderOther.trim()
+              : null,
+          age,
+          computer_graphics_knowledge: demographics.computerGraphicsKnowledge,
+          design_modeling_experience: demographics.designModelingExperience,
+          artistic_experience: demographics.artisticExperience,
+        });
       }
-      const nextStudyRatings = testingMode
-        ? baseStudyRatings
-        : addRepeatedRatings(baseStudyRatings);
-      setRemoteSessionId(assignment?.[0]?.study_session_id ?? '');
-      setAttributeOrder(nextOrder);
-      const nextTrainingRatings = makeRatings(
-        shuffle(TRAINING_STIMULI),
-        'training',
+      if (
+        claimed.pair_trials.length !== (testingMode ? TEST_PAIR_TRIALS : PAIR_TRIALS_PER_SESSION) ||
+        claimed.reference_trials.length !==
+          (testingMode ? TEST_REFERENCE_TRIALS : REFERENCE_TRIALS_PER_SESSION)
+      ) {
+        throw new Error('The server returned an incomplete assignment.');
+      }
+      const nextTrials = buildTrials(claimed);
+      const urls = nextTrials.flatMap((trial) =>
+        trial.type === 'pair'
+          ? [stimulusUrl(trial.displayPathA), stimulusUrl(trial.displayPathB)]
+          : [stimulusUrl(trial.referencePath), ...trial.candidateOrder.map(stimulusUrl)],
       );
-      setTrainingRatings(nextTrainingRatings);
-      setStudyRatings(nextStudyRatings);
-      const urls = [
-        ...nextTrainingRatings.map(ratingImageUrl),
-        ...nextStudyRatings.map(ratingImageUrl),
-      ];
-      setPreloadTotal(urls.length);
-      await preloadImages(urls, (loaded) => {
-        if (preloadRun.current === runId) setPreloadedCount(loaded);
+      setPreloadTotal(new Set(urls).size);
+      await preloadImages(urls, (count) => {
+        if (preparationRun.current === run) setPreloaded(count);
       });
-      if (preloadRun.current !== runId) return;
-      setStudyPrepared(true);
-    } catch {
-      if (preloadRun.current !== runId) return;
-      setStudyPrepared(false);
-      setIndex(0);
-      setStartError(
-        'The study images could not be prepared. Check your connection and try again.',
-      );
+      if (preparationRun.current !== run) return;
+      setTrials(nextTrials);
+      setStudySessionId(claimed.study_session_id);
+      setPrepared(true);
+    } catch (cause) {
+      if (preparationRun.current !== run) return;
+      setError(cause instanceof Error ? cause.message : 'The study could not be prepared.');
     } finally {
-      if (preloadRun.current === runId) setStarting(false);
+      if (preparationRun.current === run) setPreparing(false);
     }
   }
 
-  function openDemographics() {
-    setStage('demographics');
-  }
-
-  function openExplanation() {
+  function openTutorial() {
     if (!demographicsComplete) return;
-    setExamplesRevealed(false);
-    setStage('explanation');
-    void prepareStudy(demographics);
+    setStage('tutorial');
+    void prepareStudy();
   }
 
   function startStudy() {
-    if (!studyPrepared) return;
+    if (!prepared) return;
     setIndex(0);
     trialStartedAt.current = performance.now();
-    setStage('training');
+    setStage('study');
   }
 
-  function returnToDemographics() {
-    preloadRun.current += 1;
-    setStarting(false);
-    setStudyPrepared(false);
-    setPreloadedCount(0);
-    setPreloadTotal(0);
-    setStartError('');
-    setStage('demographics');
-  }
-
-  function updateRating(field: Attribute, value: number) {
-    const update = (previous: Rating[]) =>
-      previous.map((rating, ratingIndex) =>
-        ratingIndex === index ? { ...rating, [field]: value } : rating,
-      );
-    if (isTraining) setTrainingRatings(update);
-    else setStudyRatings(update);
-  }
-
-  function goBack() {
-    if (index === 0) return;
-    setExpandedImage(false);
-    setShowAttributeHelp(false);
-    setIndex((previous) => previous - 1);
-    trialStartedAt.current = performance.now();
-  }
-
-  async function continueRatings() {
-    if (!canContinue || submitting) return;
-    const elapsed = Math.round(performance.now() - trialStartedAt.current);
-    const nextRatings = activeRatings.map((rating, ratingIndex) =>
-      ratingIndex === index
-        ? { ...rating, responseTimeMs: elapsed }
-        : rating,
+  function updateCurrent(update: Partial<PairTrial> | Partial<ReferenceTrial>) {
+    setTrials((previous) =>
+      previous.map((trial, trialIndex) =>
+        trialIndex === index ? ({ ...trial, ...update } as Trial) : trial,
+      ),
     );
+  }
 
-    if (isTraining) setTrainingRatings(nextRatings);
-    else setStudyRatings(nextRatings);
+  function canonicalRelative(choice: RelativeChoice, swapped: boolean) {
+    if (choice === 'same') return 0;
+    if (choice === 'a') return swapped ? 1 : -1;
+    return swapped ? -1 : 1;
+  }
 
-    if (index === nextRatings.length - 1) {
-      if (isTraining) {
-        setIndex(0);
-        setShowAttributeHelp(false);
-        setExpandedImage(false);
-        trialStartedAt.current = performance.now();
-        setStage('study');
-      } else {
-        const result = {
-          meta,
-          attributeOrder,
-          testingMode,
-          demographics,
-          glossinessFirst: attributeOrder[0] === 'glossiness',
-          trainingRatings,
-          studyRatings: nextRatings,
-          completedAt: new Date().toISOString(),
-        };
-        if (testingMode) {
-          localStorage.setItem(
-            'material-perception-last-result',
-            JSON.stringify(result),
-          );
-        } else {
-          setSubmitting(true);
-          setSubmitError('');
-          try {
-            if (!remoteSessionId) {
-              throw new Error('The remote study session is missing.');
-            }
-            await submitStudySession(
-              remoteSessionId,
-              meta.participantId,
-              trainingRatings.map((rating, trainingIndex) => ({
-                stimulus: rating.stimulus,
-                trial_number: trainingIndex + 1,
-                glossiness: rating.glossiness!,
-                metallicness: rating.metallicness!,
-                response_time_ms: rating.responseTimeMs ?? 0,
-              })),
-              nextRatings.filter((rating) => !rating.isRepeat).map((rating) => ({
-                stimulus_id: rating.stimulusId!,
-                glossiness: rating.glossiness!,
-                metallicness: rating.metallicness!,
-                response_time_ms: rating.responseTimeMs ?? 0,
-              })),
-              nextRatings.filter((rating) => rating.isRepeat).map((rating) => ({
-                stimulus_id: rating.stimulusId!,
-                trial_number: rating.trialNumber,
-                repeat_of_trial_number: rating.repeatOfTrialNumber!,
-                glossiness: rating.glossiness!,
-                metallicness: rating.metallicness!,
-                response_time_ms: rating.responseTimeMs ?? 0,
-              })),
-            );
-          } catch {
-            setSubmitError(
-              'Your responses could not be saved. Please try again without closing this page.',
-            );
-            setSubmitting(false);
-            return;
-          }
-          setSubmitting(false);
-        }
-        setStage('complete');
-      }
+  async function finishStudy(completedTrials: Trial[]) {
+    if (testingMode) {
+      localStorage.setItem('material-constancy-last-test', JSON.stringify(completedTrials));
+      setStage('complete');
       return;
     }
+    setSubmitting(true);
+    setError('');
+    try {
+      await submitConstancySession(
+        studySessionId,
+        metadata.participantId,
+        completedTrials
+          .filter((trial): trial is PairTrial => trial.type === 'pair')
+          .map((trial) => ({
+            pair_id: trial.pairId,
+            same_material_likelihood: trial.sameMaterialLikelihood!,
+            relative_glossiness: canonicalRelative(trial.glossChoice, trial.swapped),
+            relative_metallicness: canonicalRelative(trial.metalChoice, trial.swapped),
+            response_time_ms: trial.responseTimeMs ?? 0,
+          })),
+        completedTrials
+          .filter((trial): trial is ReferenceTrial => trial.type === 'reference')
+          .map((trial) => ({
+            reference_id: trial.referenceId,
+            candidate_order: trial.candidateOrder,
+            selected_candidate_path: trial.selectedCandidatePath,
+            response_time_ms: trial.responseTimeMs ?? 0,
+          })),
+      );
+      setStage('complete');
+    } catch {
+      setError('Your responses could not be saved. Please try again without closing this page.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
-    setExpandedImage(false);
-    setShowAttributeHelp(false);
+  function continueStudy() {
+    if (!currentComplete || submitting) return;
+    const elapsed = Math.round(performance.now() - trialStartedAt.current);
+    const completedTrials = trials.map((trial, trialIndex) =>
+      trialIndex === index ? { ...trial, responseTimeMs: elapsed } : trial,
+    );
+    setTrials(completedTrials);
+    setShowHelp(false);
+    if (index === completedTrials.length - 1) {
+      void finishStudy(completedTrials);
+      return;
+    }
     setIndex((previous) => previous + 1);
     trialStartedAt.current = performance.now();
   }
 
   useEffect(() => {
-    const context = (
-      document as Document & { modelContext?: ModelContext }
-    ).modelContext;
+    const context = (document as Document & { modelContext?: ModelContext }).modelContext;
     if (!context?.registerTool) return;
     const lifecycle = new AbortController();
     const register = async () => {
       await context.registerTool(
         {
-          name: 'read_material_study_status',
-          title: 'Read material study status',
-          description:
-            'Read the visible study stage and completion progress without changing any response.',
-          inputSchema: {
-            type: 'object',
-            properties: {},
-            additionalProperties: false,
-          },
-          annotations: {
-            readOnlyHint: true,
-            untrustedContentHint: false,
-          },
+          name: 'read_constancy_study_status',
+          title: 'Read material constancy study status',
+          description: 'Read the visible stage and progress without changing any response.',
+          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+          annotations: { readOnlyHint: true, untrustedContentHint: false },
           execute: () => ({
             stage,
-            currentSample:
-              stage === 'training'
-                ? index + 1
-                : stage === 'study'
-                  ? TRAINING_STIMULI.length + index + 1
-                  : null,
-            totalSamples: totalTrialCount,
-            completedSamples:
-              stage === 'study'
-                ? TRAINING_STIMULI.length + completedInPhase
-                : completedInPhase,
-            attributeOrder: attributeOrder.length ? attributeOrder : null,
+            currentTrial: stage === 'study' ? index + 1 : null,
+            totalTrials: expectedTrials,
+            imagesReady: prepared,
+            testingMode,
           }),
         },
         { signal: lifecycle.signal },
       );
       await context.registerTool(
         {
-          name: 'start_material_study',
-          title: 'Continue material study',
-          description:
-            'Move from consent to demographics, continue to the instructions, or start the study after the instructions.',
-          inputSchema: {
-            type: 'object',
-            properties: {},
-            additionalProperties: false,
-          },
-          annotations: {
-            readOnlyHint: false,
-            untrustedContentHint: false,
-          },
+          name: 'continue_constancy_study',
+          title: 'Continue material constancy study',
+          description: 'Continue from consent, demographics, or instructions when requirements are met.',
+          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+          annotations: { readOnlyHint: false, untrustedContentHint: false },
           execute: () => {
             if (stage === 'welcome') {
-              if (!consented) {
-                throw new Error(
-                  'Consent must be accepted before continuing.',
-                );
-              }
-              openDemographics();
+              if (!consented) throw new Error('Consent must be accepted before continuing.');
+              setStage('demographics');
               return { stage: 'demographics' };
             }
             if (stage === 'demographics') {
               if (!demographicsComplete) {
-                throw new Error(
-                  'The demographic questionnaire must be completed manually.',
-                );
+                throw new Error('The demographic questionnaire must be completed manually.');
               }
-              openExplanation();
-              return { stage: 'explanation' };
+              openTutorial();
+              return { stage: 'tutorial' };
             }
-            if (stage === 'explanation') {
-              if (!studyPrepared) {
-                throw new Error('The study images are still loading.');
-              }
+            if (stage === 'tutorial') {
+              if (!prepared) throw new Error('The study images are still loading.');
               startStudy();
-              return {
-                stage: 'training',
-                totalSamples: TRAINING_STIMULI.length,
-              };
+              return { stage: 'study', totalTrials: expectedTrials };
             }
-            throw new Error(
-              'The study cannot be started from the current stage.',
-            );
+            throw new Error('The study cannot be continued from the current stage.');
           },
         },
         { signal: lifecycle.signal },
@@ -871,55 +597,31 @@ export default function Home() {
     };
     void register().catch(() => undefined);
     return () => lifecycle.abort();
-  }, [
-    attributeOrder,
-    completedInPhase,
-    consented,
-    demographicsComplete,
-    index,
-    stage,
-    testingMode,
-    studyPrepared,
-    totalTrialCount,
-  ]);
+  }, [consented, demographicsComplete, expectedTrials, index, prepared, stage, testingMode]);
 
   if (stage === 'welcome') {
     return (
       <main className="study-shell welcome-shell">
         <section className="welcome-card" aria-labelledby="study-title">
-          <div className="study-mark" aria-hidden="true">
-            <span /><span /><span />
-          </div>
+          <div className="study-mark" aria-hidden="true"><span /><span /><span /></div>
           <h1 id="study-title">Visual Perception Study</h1>
-          <p className="lead">
-            Thank you for taking part in this user study.
-          </p>
+          <p className="lead">Thank you for taking part in this user study.</p>
 
           <div className="attention-callout">
             <Eye aria-hidden="true" />
             <div>
               <h2>Please read carefully and stay attentive</h2>
               <p>
-                Take time to understand the two attributes before you begin.
-                Look closely at every image and give your best judgment rather
-                than answering at random.
+                You will compare surface materials across changes in shape and
+                illumination. Base every response on your visual impression.
               </p>
             </div>
           </div>
 
           <div className="study-facts">
-            <div>
-              <span className="fact-value">25 min</span>
-              <span className="fact-label">Estimated time</span>
-            </div>
-            <div>
-              <span className="fact-value">{totalTrialCount}</span>
-              <span className="fact-label">Images to rate</span>
-            </div>
-            <div>
-              <Monitor aria-hidden="true" />
-              <span className="fact-label">Desktop or laptop</span>
-            </div>
+            <div><strong className="fact-value">≈ 25 min</strong><span className="fact-label">Estimated time</span></div>
+            <div><strong className="fact-value">{expectedTrials}</strong><span className="fact-label">Comparisons</span></div>
+            <div><Monitor aria-hidden="true" /><span className="fact-label">Desktop or laptop</span></div>
           </div>
 
           <Button
@@ -927,7 +629,7 @@ export default function Home() {
             variant="outline"
             className="testing-toggle"
             aria-pressed={testingMode}
-            onClick={() => setTestingMode((enabled) => !enabled)}
+            onClick={() => setTestingMode((value) => !value)}
           >
             <FlaskConical aria-hidden="true" /> Testing
             <span>{testingMode ? 'On' : 'Off'}</span>
@@ -937,34 +639,11 @@ export default function Home() {
             <h2>Before you begin</h2>
             <ul>
               <li>Use a desktop or laptop in a normally lit room.</li>
-              <li>
-                Set your screen to a comfortable, clearly visible brightness.
-              </li>
-              <li>
-                Do not refresh or close the page while completing the study.
-              </li>
-              <li>
-                There are no right or wrong answers—we are interested in your
-                perception.
-              </li>
-              <li>
-                Click any material image to enlarge it, then click it again to
-                return.
-              </li>
-              <li>
-                We have <strong>control questions</strong> throughout the test
-                that will detect random answers or inattentive users. Please
-                make sure you <strong>pay attention during the test</strong>.
-              </li>
-              <li>
-                Descriptions of visual features are available by clicking on
-                the info icon{' '}
-                <CircleHelp
-                  className="inline-info-icon"
-                  aria-label="Information"
-                />{' '}
-                next to the title.
-              </li>
+              <li>Set your screen to a comfortable, clearly visible brightness.</li>
+              <li>Do not refresh or close the page while completing the study.</li>
+              <li>Click any image to enlarge it; click again to return.</li>
+              <li>Some questions have objectively verifiable answers and help detect inattentive responding.</li>
+              <li>Feature descriptions are available from the <CircleHelp className="inline-info-icon" aria-label="Information" /> icon during pair comparisons.</li>
             </ul>
           </div>
 
@@ -976,17 +655,10 @@ export default function Home() {
             />
             <span>
               I voluntarily agree to participate. I understand that the data
-              collected will be anonymized and used as part of an academic
-              research study.
+              collected will be anonymized and used as part of an academic study.
             </span>
           </label>
-
-          <Button
-            size="lg"
-            className="primary-action"
-            disabled={!consented}
-            onClick={openDemographics}
-          >
+          <Button className="primary-action" size="lg" disabled={!consented} onClick={() => setStage('demographics')}>
             Continue <ArrowRight data-icon="inline-end" />
           </Button>
         </section>
@@ -1000,11 +672,7 @@ export default function Home() {
         <section className="welcome-card demographics-card" aria-labelledby="demographics-title">
           <p className="eyebrow">About you</p>
           <h1 id="demographics-title">Demographic information</h1>
-          <p className="lead">
-            Please tell us a little about yourself. These responses will be
-            stored anonymously and used only for academic analysis.
-          </p>
-
+          <p className="lead">These responses are stored without your name and used only for academic analysis.</p>
           <div className="demographics-form">
             <DemographicChoice
               legend="Gender"
@@ -1015,97 +683,52 @@ export default function Home() {
                 { value: 'other', label: 'Other (specify)' },
                 { value: 'prefer_not_to_answer', label: 'Prefer not to answer' },
               ]}
-              onChange={(gender) =>
-                setDemographics((current) => ({ ...current, gender }))
-              }
+              onChange={(gender) => setDemographics((current) => ({ ...current, gender }))}
             />
             {demographics.gender === 'other' ? (
               <label className="demographic-text-field">
                 <span>Please specify</span>
                 <input
-                  type="text"
                   value={demographics.genderOther}
                   maxLength={80}
-                  autoComplete="off"
-                  onChange={(event) =>
-                    setDemographics((current) => ({
-                      ...current,
-                      genderOther: event.target.value,
-                    }))
-                  }
+                  onChange={(event) => setDemographics((current) => ({ ...current, genderOther: event.target.value }))}
                 />
               </label>
             ) : null}
-
             <label className="demographic-text-field age-field">
               <span>Age</span>
               <input
                 type="number"
                 min="18"
                 max="100"
-                inputMode="numeric"
                 value={demographics.age}
-                onChange={(event) =>
-                  setDemographics((current) => ({
-                    ...current,
-                    age: event.target.value,
-                  }))
-                }
+                onChange={(event) => setDemographics((current) => ({ ...current, age: event.target.value }))}
               />
               <small>Enter an age between 18 and 100.</small>
             </label>
-
             <DemographicChoice
               legend="Knowledge of computer graphics"
               value={demographics.computerGraphicsKnowledge}
               options={EXPERIENCE_OPTIONS}
-              onChange={(computerGraphicsKnowledge) =>
-                setDemographics((current) => ({
-                  ...current,
-                  computerGraphicsKnowledge,
-                }))
-              }
+              onChange={(value) => setDemographics((current) => ({ ...current, computerGraphicsKnowledge: value }))}
             />
             <DemographicChoice
               legend="Experience with design or 3D modeling software"
               value={demographics.designModelingExperience}
               options={EXPERIENCE_OPTIONS}
-              onChange={(designModelingExperience) =>
-                setDemographics((current) => ({
-                  ...current,
-                  designModelingExperience,
-                }))
-              }
+              onChange={(value) => setDemographics((current) => ({ ...current, designModelingExperience: value }))}
             />
             <DemographicChoice
               legend="Artistic experience or knowledge"
               value={demographics.artisticExperience}
               options={EXPERIENCE_OPTIONS}
-              onChange={(artisticExperience) =>
-                setDemographics((current) => ({
-                  ...current,
-                  artisticExperience,
-                }))
-              }
+              onChange={(value) => setDemographics((current) => ({ ...current, artisticExperience: value }))}
             />
           </div>
-
           <div className="demographics-actions">
-            <Button
-              type="button"
-              size="lg"
-              variant="ghost"
-              onClick={() => setStage('welcome')}
-            >
-              <ArrowLeft data-icon="inline-start" /> Back
-            </Button>
-            <Button
-              type="button"
-              size="lg"
-              disabled={!demographicsComplete}
-              onClick={openExplanation}
-            >
-              Continue to instructions <ArrowRight data-icon="inline-end" />
+            <Button variant="ghost" size="lg" onClick={() => setStage('welcome')}><ArrowLeft /> Back</Button>
+            <Button size="lg" disabled={!demographicsComplete} onClick={openTutorial}>
+              Continue to instructions <ArrowRight />
             </Button>
           </div>
         </section>
@@ -1113,117 +736,50 @@ export default function Home() {
     );
   }
 
-  if (stage === 'explanation') {
+  if (stage === 'tutorial') {
     return (
-      <main className="study-shell explanation-shell">
-        <header className="page-header">
-          <div>
-            <span className="brand-dot" aria-hidden="true" />
-            Material appearance
+      <main className="study-shell tutorial-shell">
+        <header className="page-header"><div><span className="brand-dot" /> Material constancy</div><span>Instructions</span></header>
+        <section className="tutorial-content">
+          <div className="tutorial-heading">
+            <p className="eyebrow">What you will judge</p>
+            <h1>Compare materials, not scenes</h1>
+            <p>Shape and illumination may change. Focus on the surface material covering each object.</p>
           </div>
-          <span>Instructions</span>
-        </header>
-        {!examplesRevealed ? (
-          <button
-            type="button"
-            className="explanation-gate"
-            aria-labelledby="explanation-gate-title"
-            onClick={() => setExamplesRevealed(true)}
-          >
-            <span className="explanation-heading">
-              <span className="eyebrow">What you will rate</span>
-              <span
-                className="explanation-title"
-                id="explanation-gate-title"
-              >
-                Learn the two visual attributes
-              </span>
-              <span className="explanation-description">
-                Focus on the material covering the object, not on the
-                background. You will rate how strongly each attribute applies
-                from 1 to 7.
-              </span>
-            </span>
-            <span className="gate-prompt">
-              Click anywhere to continue <ArrowRight aria-hidden="true" />
-            </span>
-          </button>
-        ) : (
-          <section
-            className="explanation-content"
-            aria-labelledby="explanation-title"
-          >
-            <div className="explanation-heading">
-              <p className="eyebrow">What you will rate</p>
-              <h1 id="explanation-title">Learn the two visual attributes</h1>
-              <p>
-                Focus on the material covering the object, not on the
-                background. You will rate how strongly each attribute applies
-                from 1 to 7.
-              </p>
+          <div className="task-guide-grid">
+            <article className="task-guide-card">
+              <span>1</span><h2>Material identity</h2>
+              <p>Judge how likely it is that objects A and B have exactly the same underlying surface material.</p>
+              <strong>Definitely same → Definitely different</strong>
+            </article>
+            <article className="task-guide-card">
+              <span>2</span><h2>Relative appearance</h2>
+              <p>Compare their visible glossiness and metallicness, even if you think the underlying material is the same.</p>
+              <strong>A → Approximately same → B</strong>
+            </article>
+            <article className="task-guide-card">
+              <span>3</span><h2>Reference selection</h2>
+              <p>Select which of four candidates has the same underlying material as the reference. All candidates share one scene condition.</p>
+              <strong>One candidate is physically correct</strong>
+            </article>
+          </div>
+          <div className="feature-definitions">
+            <div><strong>Glossiness</strong><p>Look for specular highlights and recognizable or blurred reflections. Do not equate glossiness with overall brightness.</p></div>
+            <div><strong>Metallicness</strong><p>Look for strong bright–dark contrast and reflections tinted by the surface colour. A surface can be glossy without being metallic.</p></div>
+          </div>
+          <div className="preload-status">
+            {preparing ? <LoaderCircle className="is-spinning" /> : prepared ? <Check /> : <CircleHelp />}
+            <div>
+              <strong>{prepared ? 'Images ready' : preparing ? 'Preparing study images' : 'Study not ready'}</strong>
+              <span>{preparing ? `${preloaded} of ${preloadTotal || '…'} unique images loaded` : prepared ? `${expectedTrials} trials prepared` : error}</span>
             </div>
-
-            <ExamplePair
-              attribute="Glossiness"
-              description="Glossiness describes how much a surface appears smooth, shiny, or lustrous. It is independent from how bright or light-colored the material is overall."
-              cue="specular highlights and recognizable reflections. Glossier surfaces usually show stronger or clearer reflected features; matte surfaces show weak, broad, or no visible reflections."
-              lowImage={assetUrl('examples/glossy_0.jpg')}
-              highImage={assetUrl('examples/glossy_1.jpg')}
-            />
-            <ExamplePair
-              attribute="Metallicness"
-              description="Metallicness describes how much the surface looks as if it is made of metal. A material can be glossy without looking metallic."
-              cue="strong contrast across the shape, darker regions away from highlights, and reflections that may take on the material's color rather than remaining white."
-              lowImage={assetUrl('examples/metal_0.jpg')}
-              highImage={assetUrl('examples/metal_1.jpg')}
-            />
-
-            <div className="explanation-actions">
-              <Button
-                variant="ghost"
-                size="lg"
-                onClick={returnToDemographics}
-              >
-                <ArrowLeft data-icon="inline-start" /> Back
-              </Button>
-              <Button
-                size="lg"
-                disabled={starting || !studyPrepared}
-                onClick={startStudy}
-              >
-                {studyPrepared ? 'Start study' : 'Please wait…'}
-                <ArrowRight data-icon="inline-end" />
-              </Button>
-            </div>
-            <div className="preload-status" role="status" aria-live="polite">
-              {studyPrepared ? (
-                <Check aria-hidden="true" />
-              ) : (
-                <LoaderCircle className={starting ? 'is-spinning' : ''} aria-hidden="true" />
-              )}
-              <div>
-                <strong>
-                  {studyPrepared
-                    ? 'Images ready'
-                    : starting
-                      ? `Preparing images ${preloadedCount} of ${preloadTotal || totalTrialCount}`
-                      : 'Images are not ready'}
-                </strong>
-                <span>
-                  {studyPrepared
-                    ? 'You can begin the study.'
-                    : 'Please wait here while the images are loaded.'}
-                </span>
-              </div>
-              {!studyPrepared && !starting ? (
-                <Button size="sm" variant="outline" onClick={() => void prepareStudy()}>
-                  Try again
-                </Button>
-              ) : null}
-            </div>
-            {startError ? <p className="form-error preload-error">{startError}</p> : null}
-          </section>
-        )}
+            {error ? <Button variant="outline" onClick={() => void prepareStudy()}>Try again</Button> : null}
+          </div>
+          <div className="explanation-actions">
+            <Button variant="ghost" size="lg" onClick={() => setStage('demographics')}><ArrowLeft /> Back</Button>
+            <Button size="lg" disabled={!prepared || preparing} onClick={startStudy}>Start study <ArrowRight /></Button>
+          </div>
+        </section>
       </main>
     );
   }
@@ -1231,26 +787,14 @@ export default function Home() {
   if (stage === 'complete') {
     return (
       <main className="study-shell complete-shell">
-        <section className="complete-card" aria-labelledby="complete-title">
-          <h1 id="complete-title">
-            Thank you for taking part in this user study.
-          </h1>
+        <section className="complete-card">
+          <div className="success-icon"><Check /></div>
+          <p className="eyebrow">Study complete</p>
+          <h1>Thank you for taking part</h1>
+          <p className="lead">Your responses have been recorded.</p>
           {testingMode ? (
             <div className="complete-actions">
-              <Button
-                size="lg"
-                onClick={() =>
-                  downloadResults(
-                    trainingRatings,
-                    studyRatings,
-                    meta,
-                    attributeOrder,
-                    demographics,
-                  )
-                }
-              >
-                <Download data-icon="inline-start" /> Download test data
-              </Button>
+              <Button onClick={() => downloadTestingData(trials, demographics, metadata)}><Download /> Download test data</Button>
             </div>
           ) : null}
         </section>
@@ -1258,162 +802,123 @@ export default function Home() {
     );
   }
 
-  const totalInPhase = activeRatings.length;
-  const imageOffset = isTraining ? 0 : TRAINING_STIMULI.length;
-  const imageNumber = imageOffset + index + 1;
-  const completedOverall = imageOffset + completedInPhase;
-  const imageSrc = ratingImageUrl(current);
+  if (!current) return null;
+  const progress = ((index + 1) / trials.length) * 100;
 
   return (
-    <main className="study-shell trial-shell">
+    <main className="study-shell constancy-study-shell">
       <header className="trial-header">
-        <div>
-          <span className="brand-dot" aria-hidden="true" />
-          Material appearance
-        </div>
-        <span>Image {imageNumber} of {totalTrialCount}</span>
+        <div><span className="brand-dot" /> Material constancy</div>
+        <span>Trial {index + 1} of {trials.length}</span>
       </header>
+      <Progress className="study-progress" value={progress} />
 
-      <Progress
-        value={
-          ((imageNumber - 1 + (canContinue ? 1 : 0)) /
-            totalTrialCount) *
-          100
-        }
-        aria-label={
-          completedOverall +
-          ' of ' +
-          totalTrialCount +
-          ' images completed'
-        }
-        className="study-progress"
-      />
-
-      <section className="trial-grid" aria-live="polite">
-        <div className="stimulus-panel">
-          <button
-            type="button"
-            className="stimulus-frame"
-            onClick={() => setExpandedImage(true)}
-            aria-label={'Enlarge material image ' + imageNumber}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              key={current.stimulus}
-              src={imageSrc}
-              alt={'Material sample ' + imageNumber}
-              draggable={false}
-            />
-          </button>
-          <p className="zoom-reminder">
-            <ZoomIn aria-hidden="true" />
-            <span>
-              Focus on the whole material before answering. Click the image to
-              zoom in; click it again to return.
-            </span>
-          </p>
-        </div>
-
-        <div className="ratings-panel">
-          <div className="ratings-heading">
-            <p className="eyebrow">Your visual impression</p>
+      {current.type === 'pair' ? (
+        <section className="pair-trial-layout">
+          <div className="pair-images-panel">
+            {[
+              { label: 'A', path: current.displayPathA },
+              { label: 'B', path: current.displayPathB },
+            ].map((image) => (
+              <figure key={image.label}>
+                <button type="button" onClick={() => setLightboxPath(image.path)} aria-label={`Enlarge image ${image.label}`}>
+                  <img src={stimulusUrl(image.path)} alt={`Material ${image.label}`} />
+                </button>
+                <figcaption>{image.label}</figcaption>
+              </figure>
+            ))}
+            <p className="zoom-reminder"><ZoomIn /> Click either image to enlarge it.</p>
+          </div>
+          <div className="pair-response-panel">
             <div className="ratings-title-row">
-              <h1>Rate this material</h1>
-              <button
-                type="button"
-                className="attribute-help-button"
-                aria-label="Show glossiness and metallicness guide"
-                aria-expanded={showAttributeHelp}
-                onClick={() => setShowAttributeHelp((visible) => !visible)}
-              >
-                <CircleHelp aria-hidden="true" />
-              </button>
+              <div><p className="eyebrow">Pair comparison</p><h1>Compare A and B</h1></div>
+              <button className="attribute-help-button" aria-expanded={showHelp} onClick={() => setShowHelp((value) => !value)}><CircleHelp /></button>
             </div>
-            <p className="ratings-instructions">
-              Select one value on each scale. Both answers are required.
-            </p>
-            {showAttributeHelp ? (
-              <aside
-                className="attribute-help-window"
-                aria-label="Glossiness and metallicness guide"
-              >
-                <div className="attribute-help-item">
-                  <div className="attribute-help-images" aria-hidden="true">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={assetUrl('examples/glossy_0.jpg')} alt="" />
-                    <ArrowRight />
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={assetUrl('examples/glossy_1.jpg')} alt="" />
-                  </div>
-                  <p>
-                    <strong>Glossiness</strong>
-                    Look for specular highlights and clear reflections.
-                  </p>
-                </div>
-                <div className="attribute-help-item">
-                  <div className="attribute-help-images" aria-hidden="true">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={assetUrl('examples/metal_0.jpg')} alt="" />
-                    <ArrowRight />
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={assetUrl('examples/metal_1.jpg')} alt="" />
-                  </div>
-                  <p>
-                    <strong>Metallicness</strong>
-                    Look for strong contrast, darker regions, and tinted
-                    reflections.
-                  </p>
-                </div>
-              </aside>
+            {showHelp ? (
+              <div className="inline-help-window">
+                <p><strong>Underlying material:</strong> the physical surface reflectance, independent of object shape or lighting.</p>
+                <p><strong>Glossiness:</strong> strength and clarity of specular reflections.</p>
+                <p><strong>Metallicness:</strong> metal-like reflection structure, colour tinting and bright–dark contrast.</p>
+              </div>
             ) : null}
+            <fieldset className="pair-question identity-question">
+              <legend>How likely is it that these objects have exactly the same underlying surface material?</legend>
+              <RadioGroup
+                value={current.sameMaterialLikelihood?.toString() ?? ''}
+                onValueChange={(value) => updateCurrent({ sameMaterialLikelihood: Number(value) })}
+                className="identity-scale"
+              >
+                {IDENTITY_OPTIONS.map((option) => (
+                  <label className="scale-choice" key={option.value}>
+                    <RadioGroupItem value={option.value.toString()} />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </RadioGroup>
+            </fieldset>
+            <RelativeQuestion attribute="glossier" value={current.glossChoice} onChange={(glossChoice) => updateCurrent({ glossChoice })} />
+            <RelativeQuestion attribute="more metallic" value={current.metalChoice} onChange={(metalChoice) => updateCurrent({ metalChoice })} />
           </div>
-
-          {attributeOrder.map((attribute) => (
-            <ScaleQuestion
-              key={attribute}
-              attribute={attribute}
-              value={current[attribute]}
-              onChange={(value) => updateRating(attribute, value)}
-            />
-          ))}
-
-          <div className="trial-actions">
-            <Button
-              variant="ghost"
-              size="lg"
-              disabled={index === 0}
-              onClick={goBack}
-            >
-              <ArrowLeft data-icon="inline-start" /> Back
-            </Button>
-            <Button
-              size="lg"
-              disabled={!canContinue || submitting}
-              onClick={continueRatings}
-            >
-              {submitting
-                ? 'Saving responses…'
-                : index === totalInPhase - 1
-                ? isTraining
-                  ? 'Next image'
-                  : 'Finish study'
-                : 'Next image'}
-              <ArrowRight data-icon="inline-end" />
-            </Button>
+        </section>
+      ) : (
+        <section className="reference-trial-layout">
+          <div className="reference-heading">
+            <p className="eyebrow">Reference selection</p>
+            <h1>Which candidate has the same underlying material?</h1>
+            <p>Ignore differences caused by shape and illumination.</p>
           </div>
-          {submitError ? <p className="form-error">{submitError}</p> : null}
-        </div>
-      </section>
-      {expandedImage ? (
-        <button
-          type="button"
-          className="image-lightbox"
-          onClick={() => setExpandedImage(false)}
-          aria-label="Close enlarged material image"
+          <div className="reference-workspace">
+            <figure className="reference-sample">
+              <button type="button" onClick={() => setLightboxPath(current.referencePath)}>
+                <img src={stimulusUrl(current.referencePath)} alt="Reference material" />
+              </button>
+              <figcaption>Reference</figcaption>
+            </figure>
+            <div className="candidate-grid" role="radiogroup" aria-label="Candidate materials">
+              {current.candidateOrder.map((path, candidateIndex) => (
+                <label className="candidate-card" key={path} data-selected={current.selectedCandidatePath === path || undefined}>
+                  <input
+                    type="radio"
+                    name="reference-candidate"
+                    value={path}
+                    checked={current.selectedCandidatePath === path}
+                    onChange={() => updateCurrent({ selectedCandidatePath: path })}
+                  />
+                  <button type="button" tabIndex={-1} onClick={(event) => { event.preventDefault(); setLightboxPath(path); }}>
+                    <img src={stimulusUrl(path)} alt={`Candidate ${candidateIndex + 1}`} />
+                  </button>
+                  <span>Candidate {candidateIndex + 1}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      <footer className="constancy-actions">
+        <Button
+          variant="ghost"
+          disabled={index === 0 || submitting}
+          onClick={() => {
+            setIndex((value) => value - 1);
+            setShowHelp(false);
+            trialStartedAt.current = performance.now();
+          }}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={imageSrc} alt={'Enlarged material sample ' + imageNumber} />
-          <span><Minimize2 aria-hidden="true" /> Click image to return</span>
+          <ArrowLeft /> Back
+        </Button>
+        <div>
+          {error ? <p className="form-error">{error}</p> : null}
+          <Button disabled={!currentComplete || submitting} onClick={continueStudy}>
+            {submitting ? 'Saving…' : index === trials.length - 1 ? 'Submit responses' : 'Next trial'} <ArrowRight />
+          </Button>
+        </div>
+      </footer>
+
+      {lightboxPath ? (
+        <button className="image-lightbox" onClick={() => setLightboxPath('')} aria-label="Close enlarged image">
+          <img src={stimulusUrl(lightboxPath)} alt="Enlarged material" />
+          <span>Click to close</span>
         </button>
       ) : null}
     </main>

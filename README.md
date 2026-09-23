@@ -1,34 +1,58 @@
-# User study
+# Material constancy user study
 
-Static GitHub Pages build of the glossiness and metallicness perception study.
+Static GitHub Pages application for studying glossiness and metallicness
+constancy across changes in object geometry and illumination.
 
-The study constants are centralized in `src/study-config.ts`. Supabase assigns
-exactly 80 main-study stimuli per participant, balances every stimulus toward 10
-completed ratings, stores results server-side, and keeps the assigned order
-stable if a participant reloads. Six of those stimuli are repeated throughout
-the session to measure within-participant consistency, producing 90 total
-ratings (4 initial + 80 main + 6 repeated). The four initial images and six
-repeated responses are stored separately in `initial_ratings` and
-`repeated_ratings`. Gender, age,
-computer-graphics knowledge, design/3D-modeling experience, and artistic
-experience are stored once per participant in the `study_sessions` table.
+Each production session contains 60 trials:
 
-The application reads `PROLIFIC_PID`, `STUDY_ID`, and `SESSION_ID` from the URL.
-When those parameters are absent, a tab-scoped anonymous identifier is created
-so a normal direct run is still assigned and saved in Supabase. It requests the
-assignment as soon as the participant enters the tutorial and preloads all 90
-images before enabling the start button. The temporary Testing toggle runs
-4 + 10 bundled images locally, does not write to Supabase, and exposes the CSV
-download only on its final screen. Normal runs do not retain result data in the
-browser.
+- 40 pair trials, each collecting perceived material identity, relative
+  glossiness, and relative metallicness;
+- 20 reference-selection trials with one reference and four candidates.
 
-Deployment configuration is injected by GitHub Actions from these repository
-secrets:
+The design uses the 2,400 selected pairs from `mining_pairs_v2`: 1,200
+same-material and 1,200 different-material pairs, balanced over four
+provisional difficulty strata. Reference trials use a same-material pair as
+reference/correct match and the three other materials in the same curated group
+as distractors. All four candidates share the correct candidate's geometry and
+illumination. Sixty-four selected pairs without three QC-valid distractors are
+replaced by eligible reserve pairs.
 
-- `SUPABASE_URL`
-- `SUPABASE_PUBLISHABLE_KEY` (browser-safe; database access is restricted by RLS)
-- `STIMULUS_BASE_URL` (public HTTPS base URL containing the 2,880 render files)
+At ten responses per pair and reference set, both tasks finish after 600
+complete sessions. Supabase balances assignments by completed plus reserved
+coverage and releases sessions abandoned for more than six hours.
 
-Until `STIMULUS_BASE_URL` is configured, the deployed page can be reviewed in
-preview/testing mode with its bundled sample images, but a production assignment
-cannot preload the complete dataset.
+## Generated study data
+
+Run either generator after changing `mining_pairs_v2`:
+
+```powershell
+./scripts/generate_constancy_seeds.ps1
+```
+
+```bash
+python scripts/generate_constancy_seeds.py
+```
+
+They create:
+
+- `supabase_seeds/constancy_pairs.csv` — 2,400 pair trials;
+- `supabase_seeds/constancy_reference_sets.csv` — 1,200 reference sets;
+- `public/constancy_preview.json` — six local testing trials;
+- `supabase_seeds/manifest.json` — counts and SHA-256 hashes.
+- `cloudflare_upload_manifest.csv` — local mapping from source renders to
+  anonymous Cloudflare object keys.
+
+The two seed CSVs and the Cloudflare mapping are intentionally ignored by Git:
+they contain physical ground truth. Browser-visible image paths are SHA-256
+aliases, so filenames do not reveal which reference candidate is correct.
+
+## Deployment
+
+Follow [DEPLOYMENT.md](DEPLOYMENT.md). The GitHub workflow injects these
+repository secrets into the static build:
+
+- `SUPABASE_URL`;
+- `SUPABASE_PUBLISHABLE_KEY`;
+- `STIMULUS_BASE_URL`.
+
+Never use or expose a Supabase service-role key in this static website.

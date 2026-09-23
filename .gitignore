@@ -4,3 +4,9 @@ dist/
 .env.*
 !.env.example
 *.local
+
+# These files contain the study ground truth. Keep them local and import them
+# directly into Supabase; never publish them with the GitHub Pages source.
+supabase_seeds/*.csv
+cloudflare_upload_manifest.csv
+.r2_staging/
