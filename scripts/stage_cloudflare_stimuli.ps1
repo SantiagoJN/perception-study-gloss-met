@@ -18,18 +18,18 @@ $stagingPath = [System.IO.Path]::GetFullPath($StagingRoot)
 $rows = Import-Csv -LiteralPath $manifestPath
 
 foreach ($row in $rows) {
-  $source = Join-Path $datasetRootPath ($row.source_path -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+  $source = Join-Path $datasetRootPath $row.source_path.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
   if (-not (Test-Path -LiteralPath $source)) {
     throw "Missing source image: $source"
   }
-  $target = Join-Path $stagingPath ($row.object_key -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+  $target = Join-Path $stagingPath $row.object_key.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
   $targetDirectory = Split-Path -Parent $target
   New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
   if (-not (Test-Path -LiteralPath $target)) {
     try {
       New-Item -ItemType HardLink -Path $target -Target $source | Out-Null
     } catch {
-      throw "Could not create a hard link for $source. Put StagingRoot on the same drive as DatasetRoot and try again."
+      throw "Could not create a hard link for $source. Hard links are unavailable on mapped/network filesystems such as SSHFS. Use upload_cloudflare_stimuli.ps1 instead."
     }
   }
 }

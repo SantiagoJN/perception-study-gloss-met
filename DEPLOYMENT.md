@@ -18,9 +18,9 @@ they reveal the material identity used by the reference task.
    https://<ACCOUNT_ID>.r2.cloudflarestorage.com
    ```
 
-4. Create a hard-link staging directory. `DatasetRoot` is the directory that
-   contains the `datasetv6` folder. Put `StagingRoot` on the same disk as the
-   dataset so this does not duplicate the image data:
+4. If the dataset is on a local NTFS disk, create a hard-link staging directory.
+   `DatasetRoot` is the directory that contains the `datasetv6` folder. Put
+   `StagingRoot` on the same local disk so this does not duplicate image data:
 
    ```powershell
    .\scripts\stage_cloudflare_stimuli.ps1 `
@@ -35,6 +35,20 @@ they reveal the material identity used by the reference task.
      "cloudflare:material-constancy-stimuli/stimuli" `
      --include "*.png" --progress --transfers 12 --checkers 24
    ```
+
+   If the dataset is on a mapped/network filesystem such as SSHFS, hard links
+   are unavailable. Upload directly from the manifest instead:
+
+   ```powershell
+   .\scripts\upload_cloudflare_stimuli.ps1 `
+     -DatasetRoot "V:\vlm_dataset" `
+     -Remote "cloudflare bucket:perception-study-stimuli" `
+     -Transfers 8
+   ```
+
+   The direct uploader is resumable: rerunning the same command skips objects
+   that already exist. It writes any failures to the Git-ignored
+   `cloudflare_upload_failures.csv`.
 
 6. Connect a public custom domain for the production study. Cloudflare's
    `r2.dev` URL is suitable for testing but is rate-limited and documented as a

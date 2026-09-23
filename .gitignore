@@ -9,4 +9,5 @@ dist/
 # directly into Supabase; never publish them with the GitHub Pages source.
 supabase_seeds/*.csv
 cloudflare_upload_manifest.csv
+cloudflare_upload_failures.csv
 .r2_staging/
