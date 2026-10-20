@@ -56,6 +56,7 @@ declare global {
       supabasePublishableKey?: string;
       stimulusBaseUrl?: string;
       prolificCompletionUrl?: string;
+      apiBaseUrl?: string;
     };
   }
 }

@@ -1,0 +1,6 @@
+# One Prolific screen-out code per test. Change only the value after the
+# equals sign once the corresponding custom completion code exists in Prolific.
+test1=REPLACE_TEST1_CODE
+test2=REPLACE_TEST2_CODE
+test3=REPLACE_TEST3_CODE
+test4=REPLACE_TEST4_CODE

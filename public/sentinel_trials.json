@@ -1,0 +1,274 @@
+{
+  "schema_version": 1,
+  "positions": [
+    2,
+    4,
+    8,
+    12,
+    15
+  ],
+  "notes": [
+    "Sentinels are additional trials and do not replace balanced experimental trials.",
+    "Edit code 01 is normalized to gloss_low_metallicness_medium, matching datasetv9 naming."
+  ],
+  "tests": {
+    "test1": [
+      {
+        "sentinel_id": "SENTINEL_T1_01",
+        "image_a": "datasetv9/renders/[christmas_photo_studio][sphere][G10][20_gloss_high_metallicness_low][Misc__js_paper_stylized_pi_ata_001].png",
+        "image_b": "datasetv9/renders/[christmas_photo_studio][sphere][G10][00_gloss_low_metallicness_low][Misc__js_paper_stylized_pi_ata_001].png",
+        "physical_relation": "different_material"
+      },
+      {
+        "sentinel_id": "SENTINEL_T1_02",
+        "image_a": "datasetv9/renders/[chinese_garden][ridges_0][G12][22_gloss_high_metallicness_high][Marble__st_marble_040].png",
+        "image_b": "datasetv9/renders/[chinese_garden][ridges_0][G12][00_gloss_low_metallicness_low][Marble__st_marble_040].png",
+        "physical_relation": "different_material"
+      },
+      {
+        "sentinel_id": "SENTINEL_T1_03",
+        "image_a": "datasetv9/renders/[machine_shop][sphere][G13][02_gloss_low_metallicness_high][Metal__1246_metal_base].png",
+        "image_b": "datasetv9/renders/[machine_shop][sphere][G13][02_gloss_low_metallicness_high][Metal__1246_metal_base].png",
+        "physical_relation": "same_material"
+      },
+      {
+        "sentinel_id": "SENTINEL_T1_04",
+        "image_a": "datasetv9/renders/[chinese_garden][bumpiness_0][G00][02_gloss_low_metallicness_high][Metal__1242_metal_base].png",
+        "image_b": "datasetv9/renders/[chinese_garden][bumpiness_0][G00][20_gloss_high_metallicness_low][Metal__1242_metal_base].png",
+        "physical_relation": "different_material"
+      },
+      {
+        "sentinel_id": "SENTINEL_T1_05",
+        "image_a": "datasetv9/renders/[forest_cave][blob][G07][00_gloss_low_metallicness_low][Metal__acg_painted_metal_001].png",
+        "image_b": "datasetv9/renders/[forest_cave][blob][G07][00_gloss_low_metallicness_low][Metal__acg_painted_metal_001].png",
+        "physical_relation": "same_material"
+      }
+    ],
+    "test2": [
+      {
+        "sentinel_id": "SENTINEL_T2_01",
+        "reference": "datasetv9/renders/[machine_shop][ridges_1][G06][12_gloss_medium_metallicness_high][Fabric__0346_pw_cotton_fabric].png",
+        "solution": "datasetv9/renders/[machine_shop][bumpiness_1][G06][12_gloss_medium_metallicness_high][Fabric__0346_pw_cotton_fabric].png",
+        "confounder": "datasetv9/renders/[machine_shop][bumpiness_2][G06][00_gloss_low_metallicness_low][Fabric__0346_pw_cotton_fabric].png",
+        "correct_option": "A"
+      },
+      {
+        "sentinel_id": "SENTINEL_T2_02",
+        "reference": "datasetv9/renders/[chinese_garden][bumpiness_2][G07][10_gloss_medium_metallicness_low][Metal__acg_painted_metal_001].png",
+        "solution": "datasetv9/renders/[machine_shop][bumpiness_2][G07][10_gloss_medium_metallicness_low][Metal__acg_painted_metal_001].png",
+        "confounder": "datasetv9/renders/[machine_shop][bumpiness_2][G07][12_gloss_medium_metallicness_high][Metal__acg_painted_metal_001].png",
+        "correct_option": "B"
+      },
+      {
+        "sentinel_id": "SENTINEL_T2_03",
+        "reference": "datasetv9/renders/[canary_wharf][sphere][G04][22_gloss_high_metallicness_high][Metal__acg_painted_metal_003].png",
+        "solution": "datasetv9/renders/[forest_cave][sphere][G04][22_gloss_high_metallicness_high][Metal__acg_painted_metal_003].png",
+        "confounder": "datasetv9/renders/[forest_cave][sphere][G04][11_gloss_medium_metallicness_medium][Metal__acg_painted_metal_003].png",
+        "correct_option": "A"
+      },
+      {
+        "sentinel_id": "SENTINEL_T2_04",
+        "reference": "datasetv9/renders/[forest_cave][ridges_0][G11][00_gloss_low_metallicness_low][Misc__tc_paper_019].png",
+        "solution": "datasetv9/renders/[forest_cave][blob][G11][00_gloss_low_metallicness_low][Misc__tc_paper_019].png",
+        "confounder": "datasetv9/renders/[forest_cave][blob][G11][22_gloss_high_metallicness_high][Misc__tc_paper_019].png",
+        "correct_option": "B"
+      },
+      {
+        "sentinel_id": "SENTINEL_T2_05",
+        "reference": "datasetv9/renders/[chinese_garden][blob][G09][11_gloss_medium_metallicness_medium][Metal__th_rusty_metal_002].png",
+        "solution": "datasetv9/renders/[chinese_garden][sphere][G09][11_gloss_medium_metallicness_medium][Metal__th_rusty_metal_002].png",
+        "confounder": "datasetv9/renders/[chinese_garden][sphere][G09][00_gloss_low_metallicness_low][Metal__th_rusty_metal_002].png",
+        "correct_option": "A"
+      }
+    ],
+    "test3": [
+      {
+        "sentinel_id": "SENTINEL_T3_01",
+        "reference_scene": "datasetv9/groups4/sentinels/[sentinel_01][reference][machine_shop][ridges_1].png",
+        "question_scene": "datasetv9/groups4/sentinels/[sentinel_01][question][machine_shop][bumpiness_1].png",
+        "shared_factor": "geometry",
+        "correct_option": 1
+      },
+      {
+        "sentinel_id": "SENTINEL_T3_02",
+        "reference_scene": "datasetv9/groups4/sentinels/[sentinel_02][reference][chinese_garden][bumpiness_2].png",
+        "question_scene": "datasetv9/groups4/sentinels/[sentinel_02][question][machine_shop][bumpiness_2].png",
+        "shared_factor": "illumination",
+        "correct_option": 2
+      },
+      {
+        "sentinel_id": "SENTINEL_T3_03",
+        "reference_scene": "datasetv9/groups4/sentinels/[sentinel_03][reference][canary_wharf][sphere].png",
+        "question_scene": "datasetv9/groups4/sentinels/[sentinel_03][question][forest_cave][sphere].png",
+        "shared_factor": "illumination",
+        "correct_option": 3
+      },
+      {
+        "sentinel_id": "SENTINEL_T3_04",
+        "reference_scene": "datasetv9/groups4/sentinels/[sentinel_04][reference][forest_cave][ridges_0].png",
+        "question_scene": "datasetv9/groups4/sentinels/[sentinel_04][question][forest_cave][blob].png",
+        "shared_factor": "geometry",
+        "correct_option": 2
+      },
+      {
+        "sentinel_id": "SENTINEL_T3_05",
+        "reference_scene": "datasetv9/groups4/sentinels/[sentinel_05][reference][chinese_garden][blob].png",
+        "question_scene": "datasetv9/groups4/sentinels/[sentinel_05][question][chinese_garden][sphere].png",
+        "shared_factor": "geometry",
+        "correct_option": 1
+      }
+    ],
+    "test4": [
+      {
+        "sentinel_id": "SENTINEL_T4_01",
+        "reference": "datasetv9/renders/[machine_shop][ridges_1][G06][12_gloss_medium_metallicness_high][Fabric__0346_pw_cotton_fabric].png",
+        "candidates": [
+          {
+            "role": "solution",
+            "image_path": "datasetv9/renders/[machine_shop][bumpiness_2][G06][12_gloss_medium_metallicness_high][Fabric__0346_pw_cotton_fabric].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[machine_shop][bumpiness_2][G06][00_gloss_low_metallicness_low][Fabric__0346_pw_cotton_fabric].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[machine_shop][bumpiness_2][G06][01_gloss_low_metallicness_medium][Fabric__0346_pw_cotton_fabric].png"
+          },
+          {
+            "role": "solution",
+            "image_path": "datasetv9/renders/[forest_cave][ridges_1][G06][12_gloss_medium_metallicness_high][Fabric__0346_pw_cotton_fabric].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[forest_cave][ridges_1][G06][00_gloss_low_metallicness_low][Fabric__0346_pw_cotton_fabric].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[forest_cave][bumpiness_2][G06][01_gloss_low_metallicness_medium][Fabric__0346_pw_cotton_fabric].png"
+          }
+        ]
+      },
+      {
+        "sentinel_id": "SENTINEL_T4_02",
+        "reference": "datasetv9/renders/[chinese_garden][bumpiness_2][G07][10_gloss_medium_metallicness_low][Metal__acg_painted_metal_001].png",
+        "candidates": [
+          {
+            "role": "solution",
+            "image_path": "datasetv9/renders/[machine_shop][bumpiness_2][G07][10_gloss_medium_metallicness_low][Metal__acg_painted_metal_001].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[machine_shop][bumpiness_2][G07][12_gloss_medium_metallicness_high][Metal__acg_painted_metal_001].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[machine_shop][bumpiness_2][G07][22_gloss_high_metallicness_high][Metal__acg_painted_metal_001].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[chinese_garden][ridges_2][G07][12_gloss_medium_metallicness_high][Metal__acg_painted_metal_001].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[chinese_garden][ridges_2][G07][22_gloss_high_metallicness_high][Metal__acg_painted_metal_001].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[chinese_garden][ridges_2][G07][21_gloss_high_metallicness_medium][Metal__acg_painted_metal_001].png"
+          }
+        ]
+      },
+      {
+        "sentinel_id": "SENTINEL_T4_03",
+        "reference": "datasetv9/renders/[canary_wharf][sphere][G04][22_gloss_high_metallicness_high][Metal__acg_painted_metal_003].png",
+        "candidates": [
+          {
+            "role": "solution",
+            "image_path": "datasetv9/renders/[forest_cave][sphere][G04][22_gloss_high_metallicness_high][Metal__acg_painted_metal_003].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[forest_cave][sphere][G04][11_gloss_medium_metallicness_medium][Metal__acg_painted_metal_003].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[forest_cave][sphere][G04][01_gloss_low_metallicness_medium][Metal__acg_painted_metal_003].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[canary_wharf][ridges_1][G04][11_gloss_medium_metallicness_medium][Metal__acg_painted_metal_003].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[canary_wharf][ridges_1][G04][01_gloss_low_metallicness_medium][Metal__acg_painted_metal_003].png"
+          },
+          {
+            "role": "solution",
+            "image_path": "datasetv9/renders/[canary_wharf][ridges_1][G04][22_gloss_high_metallicness_high][Metal__acg_painted_metal_003].png"
+          }
+        ]
+      },
+      {
+        "sentinel_id": "SENTINEL_T4_04",
+        "reference": "datasetv9/renders/[forest_cave][ridges_0][G11][00_gloss_low_metallicness_low][Misc__tc_paper_019].png",
+        "candidates": [
+          {
+            "role": "solution",
+            "image_path": "datasetv9/renders/[forest_cave][blob][G11][00_gloss_low_metallicness_low][Misc__tc_paper_019].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[forest_cave][blob][G11][22_gloss_high_metallicness_high][Misc__tc_paper_019].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[forest_cave][blob][G11][12_gloss_medium_metallicness_high][Misc__tc_paper_019].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[machine_shop][ridges_0][G11][22_gloss_high_metallicness_high][Misc__tc_paper_019].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[machine_shop][ridges_0][G11][12_gloss_medium_metallicness_high][Misc__tc_paper_019].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[machine_shop][ridges_0][G11][21_gloss_high_metallicness_medium][Misc__tc_paper_019].png"
+          }
+        ]
+      },
+      {
+        "sentinel_id": "SENTINEL_T4_05",
+        "reference": "datasetv9/renders/[chinese_garden][blob][G09][11_gloss_medium_metallicness_medium][Metal__th_rusty_metal_002].png",
+        "candidates": [
+          {
+            "role": "solution",
+            "image_path": "datasetv9/renders/[chinese_garden][sphere][G09][11_gloss_medium_metallicness_medium][Metal__th_rusty_metal_002].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[chinese_garden][sphere][G09][00_gloss_low_metallicness_low][Metal__th_rusty_metal_002].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[chinese_garden][sphere][G09][22_gloss_high_metallicness_high][Metal__th_rusty_metal_002].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[forest_cave][blob][G09][00_gloss_low_metallicness_low][Metal__th_rusty_metal_002].png"
+          },
+          {
+            "role": "confounder",
+            "image_path": "datasetv9/renders/[forest_cave][blob][G09][22_gloss_high_metallicness_high][Metal__th_rusty_metal_002].png"
+          },
+          {
+            "role": "solution",
+            "image_path": "datasetv9/renders/[forest_cave][blob][G09][11_gloss_medium_metallicness_medium][Metal__th_rusty_metal_002].png"
+          }
+        ]
+      }
+    ]
+  }
+}

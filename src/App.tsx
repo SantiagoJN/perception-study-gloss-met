@@ -1,926 +1,1011 @@
-'use client';
-
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ArrowLeft,
-  ArrowRight,
-  Check,
-  CircleHelp,
-  Download,
-  Eye,
-  FlaskConical,
-  LoaderCircle,
-  Monitor,
-  ZoomIn,
-} from 'lucide-react';
-
+import { ArrowLeft, ArrowRight, Check, CircleHelp, Download, Eye, Images, LoaderCircle, Monitor, ScanSearch, Shuffle, SlidersHorizontal, ZoomIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Progress } from '@/components/ui/progress';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import {
-  claimConstancySession,
-  submitConstancySession,
-  type ClaimedSession,
-  type PairAssignment,
-  type ProlificIdentifiers,
-  type ReferenceAssignment,
-} from '@/supabase';
+import { DemographicsForm, EMPTY_DEMOGRAPHICS, demographicColumns, demographicsCells, demographicsComplete as isDemographicsComplete, demographicsPayload, type Demographics } from './demographics';
+import { PairTraining } from './PairTraining';
+import { PAIR_TRAINING_EXAMPLES, type PairTrainingAttempt } from './pairTrainingData';
+import { ParticipantLogin } from './ParticipantLogin';
+import { collectClientMetadata, loginToStudy, readProlificIdentifiers, saveStudyDemographics, screenOutStudy, submitStudy, type AuthenticatedStudySession, type StudyScreenOut, type StudySubmission, type SubmissionTrial } from './study-api';
 
-const PAIR_TRIALS_PER_SESSION = 40;
-const REFERENCE_TRIALS_PER_SESSION = 20;
-const TEST_PAIR_TRIALS = 4;
-const TEST_REFERENCE_TRIALS = 2;
 const ASSET_BASE = import.meta.env.BASE_URL;
-
-type Stage = 'welcome' | 'demographics' | 'tutorial' | 'study' | 'complete';
+const SELECTION_DISPLAY_COUNT = 6;
+const MAX_SELECTIONS = 2;
+type Stage = 'invalid' | 'login' | 'inhouse_loading' | 'welcome' | 'demographics' | 'explanation' | 'chooser' | 'instructions' | 'training' | 'study' | 'submitting' | 'screening' | 'screened_out' | 'complete';
+type StudyType = 'forcedChoice' | 'pairJudgment' | 'sceneMatching' | 'selection';
+type InhouseCredentials = { username: string; password: string; runId: string };
 type RelativeChoice = 'a' | 'same' | 'b' | '';
-
-type ModelContext = {
-  registerTool: (
-    tool: {
-      name: string;
-      title: string;
-      description: string;
-      inputSchema: Record<string, unknown>;
-      annotations: { readOnlyHint: boolean; untrustedContentHint: boolean };
-      execute: () => unknown;
-    },
-    options?: { signal: AbortSignal },
-  ) => void | Promise<void>;
+type DifficultyLevel = 'easy' | 'medium_easy' | 'medium_hard' | 'hard';
+type TrialDifficulty = DifficultyLevel | 'sentinel';
+type SentinelMetadata = { isSentinel?: boolean; sentinelId?: string; assignmentSet?: string };
+type ManifestPair = { pair_id: string; image_path_a: string; image_path_b: string; stratum: string };
+type PairTrial = SentinelMetadata & { pairId: string; stratum: string; canonicalPathA: string; canonicalPathB: string; displayPathA: string; displayPathB: string; swapped: boolean; sameMaterialLikelihood: number | null; glossChoice: RelativeChoice; metalChoice: RelativeChoice; responseTimeMs?: number };
+type ForcedChoiceManifestTrial = { trial_id: string; difficulty_level: DifficultyLevel; reference: SelectionImage; options: [SelectionImage, SelectionImage]; correct_option: 'A' | 'B' };
+type ForcedChoiceTrial = SentinelMetadata & Omit<ForcedChoiceManifestTrial, 'difficulty_level'> & { difficulty_level: TrialDifficulty; selectedOption: 'A' | 'B' | ''; responseTimeMs?: number };
+type SceneMatchingManifestTrial = { trial_id: string; difficulty_level?: DifficultyLevel; shared_factor: 'geometry' | 'illumination'; target_label: 'R' | 'A' | 'B' | 'C' | 'D'; first_scene: SelectionImage[]; second_scene: SelectionImage[] };
+type SceneMatchingTrial = SentinelMetadata & Omit<SceneMatchingManifestTrial, 'difficulty_level'> & { difficulty_level?: TrialDifficulty; selectedOption: 1 | 2 | 3 | 4 | null; responseTimeMs?: number };
+type SceneMatchingTrainingExample = Omit<SceneMatchingManifestTrial, 'trial_id'> & { training_id: string; correct_option: 1 | 2 | 3 | 4 };
+type SelectionImage = { image_id: string; image_path: string; thumbnail_path?: string; material_id?: string; group_id?: string; geometry_id?: string; environment_id?: string };
+type SelectionCandidate = SelectionImage & { candidate_id: string; is_same_material?: boolean; role?: string; difficulty_score?: number };
+type SelectionManifestTrial = { trial_id: string; difficulty_level?: DifficultyLevel; reference_source_type: 'measured' | 'svbrdf' | 'datasetv9'; reference: SelectionImage; candidates: SelectionCandidate[]; positive_count?: number; profile?: string };
+type SelectionTrial = SentinelMetadata & Omit<SelectionManifestTrial, 'difficulty_level'> & { difficulty_level?: TrialDifficulty; selectedCandidateIds: string[]; responseTimeMs?: number };
+type SentinelConfig = {
+  positions: number[];
+  tests: {
+    test1: Array<{ sentinel_id: string; image_a: string; image_b: string; physical_relation: 'same_material' | 'different_material' }>;
+    test2: Array<{ sentinel_id: string; reference: string; solution: string; confounder: string; correct_option: 'A' | 'B' }>;
+    test3: Array<{ sentinel_id: string; reference_scene: string; question_scene: string; shared_factor: 'geometry' | 'illumination'; correct_option: 1 | 2 | 3 }>;
+    test4: Array<{ sentinel_id: string; reference: string; candidates: Array<{ role: 'solution' | 'confounder'; image_path: string }> }>;
+  };
+};
+type FixedTrialGroup = { set_id: string; trial_ids: string[] };
+type FixedTrialGroupsManifest = {
+  schema_version: number;
+  seed: string;
+  group_count: number;
+  group_size: number;
+  tests: Record<'test1' | 'test2' | 'test3' | 'test4', { id_field: string; groups: FixedTrialGroup[] }>;
+};
+type FixedTrialAssignment = { setId: string; trialIds: string[] };
+type SessionMetadata = { participantId: string; sessionId: string; startedAt: string; userAgent: string; screenWidth: number; screenHeight: number };
+type TestingGroundTruth = {
+  pairs: Record<string, 1 | 5>;
+  forced_choices: Record<string, 'A' | 'B'>;
+  scene_matches: Record<string, 1 | 2 | 3 | 4>;
+  selections: Record<string, string[]>;
 };
 
-type Demographics = {
-  gender: string;
-  genderOther: string;
-  age: string;
-  computerGraphicsKnowledge: string;
-  designModelingExperience: string;
-  artisticExperience: string;
-};
+const IDENTITY_OPTIONS = [{ value: 1, label: 'Probably different' }, { value: 3, label: 'Unsure' }, { value: 5, label: 'Probably same' }];
+const TEST_COPY = {
+  forcedChoice: { title: 'Reference matching', detail: 'Choose which of two options is made of the same underlying material as a reference image.' },
+  pairJudgment: { title: 'Pair comparison', detail: 'Judge whether two objects share a material, and compare their glossiness and metallicness independently.' },
+  sceneMatching: { title: 'In-context matching', detail: 'Match one reference object to one of three candidates across two scenes rendered under different geometry or illumination conditions.' },
+  selection: { title: 'Multiple matching', detail: 'For each reference, inspect 6 candidates and select up to two objects that appear to have the same underlying material.' },
+} satisfies Record<StudyType, { title: string; detail: string }>;
+const INHOUSE_STUDY_ORDER: StudyType[] = ['pairJudgment', 'forcedChoice', 'sceneMatching', 'selection'];
+const STUDY_SESSION_SUFFIX: Record<StudyType, string> = { pairJudgment: 't1', forcedChoice: 't2', sceneMatching: 't3', selection: 't4' };
+const REDIRECT_TEST_KEYS: Record<StudyType, string> = { pairJudgment: 'test1', forcedChoice: 'test2', sceneMatching: 'test3', selection: 'test4' };
+const SENTINEL_FAILURE_LIMIT = 2;
+const PAIR_SENTINEL_ANSWERS = new Map<string, { sameMaterialLikelihood: number; canonicalGlossChoice: number; canonicalMetalChoice: number }>([
+  ['SENTINEL_T1_01', { sameMaterialLikelihood: 1, canonicalGlossChoice: -1, canonicalMetalChoice: 0 }],
+  ['SENTINEL_T1_02', { sameMaterialLikelihood: 1, canonicalGlossChoice: -1, canonicalMetalChoice: -1 }],
+  ['SENTINEL_T1_03', { sameMaterialLikelihood: 5, canonicalGlossChoice: 0, canonicalMetalChoice: 0 }],
+  ['SENTINEL_T1_04', { sameMaterialLikelihood: 1, canonicalGlossChoice: 1, canonicalMetalChoice: -1 }],
+  ['SENTINEL_T1_05', { sameMaterialLikelihood: 5, canonicalGlossChoice: 0, canonicalMetalChoice: 0 }],
+]);
+const FORCED_SENTINEL_ANSWERS = new Map<string, 'A' | 'B'>([
+  ['SENTINEL_T2_01', 'A'], ['SENTINEL_T2_02', 'B'], ['SENTINEL_T2_03', 'A'], ['SENTINEL_T2_04', 'B'], ['SENTINEL_T2_05', 'A'],
+]);
+const SCENE_SENTINEL_ANSWERS = new Map<string, number>([
+  ['SENTINEL_T3_01', 1],
+  ['SENTINEL_T3_02', 2],
+  ['SENTINEL_T3_03', 3],
+  ['SENTINEL_T3_04', 2],
+  ['SENTINEL_T3_05', 1],
+]);
 
-type PairTrial = {
-  type: 'pair';
-  pairId: string;
-  canonicalPathA: string;
-  canonicalPathB: string;
-  displayPathA: string;
-  displayPathB: string;
-  swapped: boolean;
-  sameMaterialLikelihood: number | null;
-  glossChoice: RelativeChoice;
-  metalChoice: RelativeChoice;
-  responseTimeMs?: number;
-};
-
-type ReferenceTrial = {
-  type: 'reference';
-  referenceId: string;
-  referencePath: string;
-  candidateOrder: string[];
-  selectedCandidatePath: string;
-  responseTimeMs?: number;
-};
-
-type Trial = PairTrial | ReferenceTrial;
-
-type PreviewManifest = {
-  pairs: Array<{
-    pair_id: string;
-    image_path_a: string;
-    image_path_b: string;
-  }>;
-  references: Array<{
-    reference_id: string;
-    reference_path: string;
-    candidate_paths: string[];
-  }>;
-};
-
-const EMPTY_DEMOGRAPHICS: Demographics = {
-  gender: '',
-  genderOther: '',
-  age: '',
-  computerGraphicsKnowledge: '',
-  designModelingExperience: '',
-  artisticExperience: '',
-};
-
-const EXPERIENCE_OPTIONS = [
-  { value: 'none', label: 'None' },
-  { value: 'basic', label: 'Basic' },
-  { value: 'intermediate', label: 'Intermediate' },
-  { value: 'professional', label: 'Professional' },
-];
-
-const IDENTITY_OPTIONS = [
-  { value: 1, label: 'Definitely same' },
-  { value: 2, label: 'Probably same' },
-  { value: 3, label: 'Unsure' },
-  { value: 4, label: 'Probably different' },
-  { value: 5, label: 'Definitely different' },
-];
-
-function shuffle<T>(items: T[]) {
-  const output = [...items];
-  for (let index = output.length - 1; index > 0; index -= 1) {
-    const other = Math.floor(Math.random() * (index + 1));
-    [output[index], output[other]] = [output[other], output[index]];
-  }
-  return output;
-}
-
-function assetUrl(path: string) {
-  return ASSET_BASE + path.replace(/^\/+/, '');
-}
-
-function encodeAssetPath(path: string) {
-  return path
-    .split('/')
-    .filter(Boolean)
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
-}
-
-function stimulusUrl(path: string) {
-  if (/^https?:\/\//i.test(path)) return path;
-  const base = window.USER_STUDY_CONFIG?.stimulusBaseUrl
-    ?.trim()
-    .replace(/\/$/, '');
-  if (!base) return assetUrl(encodeAssetPath(path));
-  return `${base}/${encodeAssetPath(path)}`;
-}
-
-function createAnonymousId() {
-  return typeof crypto !== 'undefined' && crypto.randomUUID
-    ? crypto.randomUUID()
+function createId() {
+  return typeof globalThis.crypto?.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
     : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
-
-function readStudyMetadata(): ProlificIdentifiers {
-  const params = new URLSearchParams(window.location.search);
-  const participantId = params.get('PROLIFIC_PID')?.trim();
-  const sessionId = params.get('SESSION_ID')?.trim();
-  if (participantId && sessionId) {
-    return {
-      participantId,
-      studyId: params.get('STUDY_ID')?.trim() || 'prolific-study',
-      sessionId,
-    };
-  }
-  const key = 'material-constancy-direct-session';
-  let directId = sessionStorage.getItem(key);
-  if (!directId) {
-    directId = createAnonymousId();
-    sessionStorage.setItem(key, directId);
-  }
-  return {
-    participantId: `direct-${directId}`,
-    studyId: 'direct-web',
-    sessionId: directId,
-  };
+function normalizedLoginName(value: string) {
+  return value.normalize('NFKC').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').replace(/[\u2010-\u2015\u2212]/g, '-').replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').trim().toLowerCase();
 }
-
-async function preloadImages(urls: string[], onProgress: (count: number) => void) {
-  const unique = [...new Set(urls)];
-  let next = 0;
-  let loaded = 0;
-  const workers = Array.from({ length: Math.min(8, unique.length) }, async () => {
-    while (next < unique.length) {
-      const url = unique[next];
-      next += 1;
+function inhouseSessionId(runId: string, type: StudyType) { return `${runId}-${STUDY_SESSION_SUFFIX[type]}`; }
+function inhouseRunId(fallback: string) {
+  const key = 'material-constancy-inhouse-run-id';
+  const stored = sessionStorage.getItem(key)?.trim();
+  if (stored) return stored;
+  sessionStorage.setItem(key, fallback);
+  return fallback;
+}
+function readSessionMetadata(prolificPid: string): SessionMetadata {
+  const participantId = prolificPid || new URLSearchParams(location.search).get('participant')?.trim() || `anonymous-${createId()}`;
+  return { participantId, sessionId: createId(), startedAt: new Date().toISOString(), userAgent: navigator.userAgent, screenWidth: screen.width, screenHeight: screen.height };
+}
+function directStudyType(): StudyType | null {
+  const segments = location.pathname.replace(/\/+$/, '').split('/');
+  const route = segments[segments.length - 1];
+  return ({ test1_pair_comparison: 'pairJudgment', test2_2afc: 'forcedChoice', test3_matching: 'sceneMatching', test4_mm: 'selection' } as Record<string, StudyType>)[route ?? ''] ?? null;
+}
+function isTestingRoute() { return location.pathname.replace(/\/+$/, '').endsWith('/testing'); }
+function isPreviewRoute() { return location.pathname.replace(/\/+$/, '').endsWith('/preview'); }
+function isInhouseRoute() { return location.pathname.replace(/\/+$/, '').endsWith('/inhouse'); }
+function isTestingMode() { return isTestingRoute() || new URLSearchParams(location.search).get('testing') === '1'; }
+function trialCount(type: StudyType) {
+  if (isPreviewRoute()) return 50;
+  if (!isTestingMode()) return 50;
+  const parameter = new URLSearchParams(location.search).get('trials');
+  const requested = parameter === null && isTestingRoute() ? 8 : Number(parameter);
+  if (type === 'selection' || type === 'sceneMatching') return Number.isInteger(requested) && requested >= 1 && requested <= 50 ? requested : 8;
+  return Number.isInteger(requested) && (requested === 50 || requested >= 8 && requested <= 48 && requested % 8 === 0) ? requested : 8;
+}
+function hashSeed(text: string) { let value = 2166136261; for (let i = 0; i < text.length; i += 1) { value ^= text.charCodeAt(i); value = Math.imul(value, 16777619); } return value >>> 0; }
+function rng(seed: number) { let state = seed >>> 0; return () => { state += 0x6d2b79f5; let value = state; value = Math.imul(value ^ value >>> 15, value | 1); value ^= value + Math.imul(value ^ value >>> 7, value | 61); return ((value ^ value >>> 14) >>> 0) / 4294967296; }; }
+function shuffle<T>(items: T[], random: () => number) { const out = [...items]; for (let i = out.length - 1; i > 0; i -= 1) { const j = Math.floor(random() * (i + 1)); [out[i], out[j]] = [out[j], out[i]]; } return out; }
+function assetUrl(path: string) { return ASSET_BASE + path.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/'); }
+function stimulusUrl(path: string) {
+  if (/^https?:\/\//i.test(path)) return path;
+  const configuredBase = window.USER_STUDY_CONFIG?.stimulusBaseUrl?.trim().replace(/\/$/, '');
+  const encodedPath = path.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
+  if (/^(datasetv\d+\/|datasetv9\/groups4\/)/.test(path.replace(/^\/+/, ''))) {
+    return configuredBase ? `${configuredBase}/${encodedPath}` : assetUrl(path);
+  }
+  return configuredBase ? `${configuredBase}/${encodedPath}` : assetUrl(`stimuli/${path}`);
+}
+function studyImageUrl(path: string) {
+  return /^(datasetv\d+\/|datasetv9\/groups4\/)/.test(path.replace(/^\/+/, '')) ? stimulusUrl(path) : assetUrl(path);
+}
+async function configuredTestEntry(filename: string, type: StudyType, description: string) {
+  const response = await fetch(assetUrl(filename), { cache: 'no-store' });
+  if (!response.ok) throw new Error(`The ${description} configuration could not be loaded.`);
+  const entries = new Map<string, string>();
+  for (const rawLine of (await response.text()).split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const separator = line.indexOf('=');
+    if (separator < 1) continue;
+    entries.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
+  }
+  const value = entries.get(REDIRECT_TEST_KEYS[type]);
+  if (!value) throw new Error(`No ${description} is configured for ${REDIRECT_TEST_KEYS[type]}.`);
+  return value;
+}
+async function configuredRedirect(type: StudyType, outcome: 'completion' | 'screen_out') {
+  const description = outcome === 'completion' ? 'completion redirect' : 'screen-out redirect';
+  const filename = outcome === 'completion' ? 'completion_redirects.txt' : 'screen_out_redirects.txt';
+  const destination = await configuredTestEntry(filename, type, description);
+  const url = new URL(destination, document.baseURI);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('The configured redirect must use HTTP or HTTPS.');
+  return url.href;
+}
+async function configuredOutcomeCode(type: StudyType, outcome: 'completion' | 'screen_out') {
+  const description = outcome === 'completion' ? 'Prolific completion code' : 'Prolific screen-out code';
+  const filename = outcome === 'completion' ? 'completion_codes.txt' : 'screen_out_codes.txt';
+  const code = await configuredTestEntry(filename, type, description);
+  if (!/^[A-Za-z0-9_-]{3,100}$/.test(code)) throw new Error(`The configured ${description} is invalid.`);
+  return code;
+}
+function selectionDisplayPath(image: SelectionImage) { return image.thumbnail_path ?? image.image_path; }
+async function preloadImage(url: string, attempts = 3, timeoutMs = 20_000) {
+  let failure: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
       await new Promise<void>((resolve, reject) => {
         const image = new Image();
         image.decoding = 'async';
-        image.onload = () => resolve();
-        image.onerror = () => reject(new Error(`Could not preload ${url}`));
+        const finish = (callback: () => void) => { window.clearTimeout(timer); image.onload = null; image.onerror = null; callback(); };
+        const timer = window.setTimeout(() => finish(() => reject(new Error(`Timed out while preloading ${url}`))), timeoutMs);
+        image.onload = () => finish(resolve);
+        image.onerror = () => finish(() => reject(new Error(`Could not preload ${url}`)));
         image.src = url;
       });
-      loaded += 1;
-      onProgress(loaded);
-    }
-  });
-  await Promise.all(workers);
-  return unique.length;
+      return;
+    } catch (cause) { failure = cause; if (attempt < attempts) await new Promise((resolve) => window.setTimeout(resolve, attempt * 250)); }
+  }
+  throw failure;
 }
-
-function pairTrialFromAssignment(item: PairAssignment): PairTrial {
-  const swapped = item.swap_ab;
-  return {
-    type: 'pair',
-    pairId: item.pair_id,
-    canonicalPathA: item.image_path_a,
-    canonicalPathB: item.image_path_b,
-    displayPathA: swapped ? item.image_path_b : item.image_path_a,
-    displayPathB: swapped ? item.image_path_a : item.image_path_b,
-    swapped,
-    sameMaterialLikelihood: null,
-    glossChoice: '',
-    metalChoice: '',
-  };
+async function preloadImages(urls: string[]) {
+  const unique = [...new Set(urls)]; let next = 0;
+  await Promise.all(Array.from({ length: Math.min(8, unique.length) }, async () => { while (next < unique.length) { await preloadImage(unique[next++]); } }));
 }
-
-function referenceTrialFromAssignment(item: ReferenceAssignment): ReferenceTrial {
-  return {
-    type: 'reference',
-    referenceId: item.reference_id,
-    referencePath: item.reference_path,
-    candidateOrder: item.candidate_order,
-    selectedCandidatePath: '',
-  };
-}
-
-function buildTrials(claimed: ClaimedSession) {
-  return shuffle([
-    ...shuffle(claimed.pair_trials).map(pairTrialFromAssignment),
-    ...shuffle(claimed.reference_trials).map(referenceTrialFromAssignment),
+function selectPairs(pairs: ManifestPair[], count: number, seed: string): PairTrial[] {
+  const random = rng(hashSeed(seed)); const strata = new Map<string, ManifestPair[]>();
+  pairs.forEach((pair) => strata.set(pair.stratum, [...(strata.get(pair.stratum) ?? []), pair]));
+  if (strata.size !== 8) throw new Error(`Expected 8 strata, found ${strata.size}.`);
+  if (count % 8) throw new Error('Pair-comparison sessions must balance all four difficulty levels and both material relations.');
+  const levels: DifficultyLevel[] = ['easy', 'medium_easy', 'medium_hard', 'hard'];
+  const perLevel = count / levels.length;
+  const samePerLevel = perLevel / 2;
+  const quotas = levels.flatMap((level) => [
+    [`same_material:${level}`, samePerLevel] as const,
+    [`different_material:${level}`, perLevel - samePerLevel] as const,
   ]);
-}
-
-function DemographicChoice({
-  legend,
-  value,
-  options,
-  onChange,
-}: {
-  legend: string;
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <fieldset className="demographic-field">
-      <legend>{legend}</legend>
-      <RadioGroup
-        aria-label={legend}
-        value={value}
-        onValueChange={onChange}
-        className="demographic-options"
-      >
-        {options.map((option) => (
-          <label key={option.value} className="demographic-option">
-            <RadioGroupItem value={option.value} />
-            <span>{option.label}</span>
-          </label>
-        ))}
-      </RadioGroup>
-    </fieldset>
-  );
-}
-
-function RelativeQuestion({
-  attribute,
-  value,
-  onChange,
-}: {
-  attribute: 'glossier' | 'more metallic';
-  value: RelativeChoice;
-  onChange: (value: RelativeChoice) => void;
-}) {
-  return (
-    <fieldset className="pair-question">
-      <legend>
-        Which surface appears <strong>{attribute}</strong>?
-      </legend>
-      <RadioGroup
-        value={value}
-        onValueChange={(next) => onChange(next as RelativeChoice)}
-        className="three-choice-scale"
-        aria-label={`Which surface appears ${attribute}?`}
-      >
-        {[
-          { value: 'a', label: 'A' },
-          { value: 'same', label: 'Approximately same' },
-          { value: 'b', label: 'B' },
-        ].map((option) => (
-          <label className="scale-choice" key={option.value}>
-            <RadioGroupItem value={option.value} />
-            <span>{option.label}</span>
-          </label>
-        ))}
-      </RadioGroup>
-    </fieldset>
-  );
-}
-
-function downloadTestingData(
-  trials: Trial[],
-  demographics: Demographics,
-  metadata: ProlificIdentifiers,
-) {
-  const payload = {
-    metadata,
-    demographics,
-    completedAt: new Date().toISOString(),
-    trials,
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {
-    type: 'application/json',
+  if (quotas.some(([stratum]) => !strata.has(stratum))) throw new Error('The pair manifest does not contain the expected relation/difficulty strata.');
+  const selected = quotas.flatMap(([stratum, quota]) => {
+    const entries = strata.get(stratum) ?? [];
+    if (entries.length < quota) throw new Error(`The ${stratum} stratum has too few pairs.`);
+    return shuffle(entries, random).slice(0, quota);
   });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'material-constancy-test.json';
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return shuffle(selected, random).map((pair) => {
+    const swapped = random() < .5;
+    return { pairId: pair.pair_id, stratum: pair.stratum, canonicalPathA: pair.image_path_a, canonicalPathB: pair.image_path_b, displayPathA: swapped ? pair.image_path_b : pair.image_path_a, displayPathB: swapped ? pair.image_path_a : pair.image_path_b, swapped, sameMaterialLikelihood: null, glossChoice: '', metalChoice: '' };
+  });
+}
+function selectSets(entries: SelectionManifestTrial[], count: number, seed: string): SelectionTrial[] {
+  if (entries.length < count) throw new Error(`Only ${entries.length} selection trials exist; ${count} were requested.`);
+  const random = rng(hashSeed(seed));
+  if (entries.some((entry) => entry.reference_source_type === 'datasetv9')) {
+    const levels: DifficultyLevel[] = ['easy', 'medium_easy', 'medium_hard', 'hard'];
+    if (count % levels.length) throw new Error('Multiple-matching sessions must contain an equal number of trials from all four difficulty levels.');
+    const each = count / levels.length;
+    const selected = levels.flatMap((level) => {
+      const options = entries.filter((entry) => entry.difficulty_level === level);
+      if (options.length < each) throw new Error(`Only ${options.length} ${level} multiple-matching trials exist.`);
+      return shuffle(options, random).slice(0, each);
+    });
+    return shuffle(selected, random).map((entry) => {
+      if (entry.candidates.length < SELECTION_DISPLAY_COUNT || new Set(entry.candidates.map((c) => c.candidate_id)).size !== entry.candidates.length) throw new Error(`${entry.trial_id} must contain at least ${SELECTION_DISPLAY_COUNT} unique candidates.`);
+      return { ...entry, candidates: shuffle(entry.candidates, random).slice(0, SELECTION_DISPLAY_COUNT), selectedCandidateIds: [] };
+    });
+  }
+  const svbrdfCount = Math.min(3, count);
+  const svbrdfs = shuffle(entries.filter((entry) => entry.reference_source_type === 'svbrdf'), random).slice(0, svbrdfCount);
+  const measured = shuffle(entries.filter((entry) => entry.reference_source_type === 'measured'), random).slice(0, count - svbrdfCount);
+  if (svbrdfs.length !== svbrdfCount || measured.length !== count - svbrdfCount) throw new Error('The selection manifest cannot provide the required measured/SVBRDF balance.');
+  return shuffle([...svbrdfs, ...measured], random).map((entry) => {
+    if (entry.candidates.length !== 18 || new Set(entry.candidates.map((c) => c.candidate_id)).size !== 18) throw new Error(`${entry.trial_id} must contain 18 unique candidates.`);
+    return { ...entry, candidates: shuffle(entry.candidates, random).slice(0, SELECTION_DISPLAY_COUNT), selectedCandidateIds: [] };
+  });
+}
+function selectForcedChoices(entries: ForcedChoiceManifestTrial[], count: number, seed: string): ForcedChoiceTrial[] {
+  if (entries.length < count) throw new Error(`Only ${entries.length} reference-matching trials exist; ${count} were requested.`);
+  const random = rng(hashSeed(seed));
+  const levels: ForcedChoiceManifestTrial['difficulty_level'][] = ['easy', 'medium_easy', 'medium_hard', 'hard'];
+  if (count % levels.length) throw new Error('Reference-matching sessions must contain an equal number of trials from all four difficulty levels.');
+  const each = count / levels.length;
+  if (each % 2) throw new Error('Reference-matching sessions must allow an equal number of correct A and B options at every difficulty level.');
+  const selected = levels.flatMap((level) => {
+    return (['A', 'B'] as const).flatMap((side) => {
+      const options = entries.filter((entry) => entry.difficulty_level === level && entry.correct_option === side);
+      if (options.length < each / 2) throw new Error(`Only ${options.length} ${level}/${side} reference-matching trials exist.`);
+      return shuffle(options, random).slice(0, each / 2);
+    });
+  });
+  return shuffle(selected, random).map((entry) => ({ ...entry, selectedOption: '' }));
+}
+function selectSceneMatches(entries: SceneMatchingManifestTrial[], count: number, seed: string): SceneMatchingTrial[] {
+  const requested = Math.min(entries.length, count);
+  const random = rng(hashSeed(seed));
+  const cells: Array<[DifficultyLevel, 'geometry' | 'illumination']> = [
+    ['easy', 'geometry'], ['medium_easy', 'illumination'],
+    ['medium_hard', 'geometry'], ['hard', 'illumination'],
+    ['easy', 'illumination'], ['medium_easy', 'geometry'],
+    ['medium_hard', 'illumination'], ['hard', 'geometry'],
+  ];
+  const quotas = Array.from({ length: cells.length }, () => Math.floor(requested / cells.length));
+  for (let index = 0; index < requested % cells.length; index += 1) quotas[index] += 1;
+  const selected = cells.flatMap(([level, factor], index) => {
+    const options = entries.filter((entry) => entry.difficulty_level === level && entry.shared_factor === factor);
+    if (options.length < quotas[index]) throw new Error(`The in-context manifest lacks ${level}/${factor} trials.`);
+    return shuffle(options, random).slice(0, quotas[index]);
+  });
+  if (selected.length !== requested) throw new Error('The in-context manifest cannot provide the requested difficulty/change balance.');
+  return shuffle(selected, random).map((entry) => ({ ...entry, selectedOption: null }));
+}
+const FIXED_GROUP_TEST_KEYS: Record<StudyType, 'test1' | 'test2' | 'test3' | 'test4'> = {
+  pairJudgment: 'test1',
+  forcedChoice: 'test2',
+  sceneMatching: 'test3',
+  selection: 'test4',
+};
+async function loadFixedTrialGroup(type: StudyType, assignmentSeed: string): Promise<FixedTrialAssignment> {
+  const response = await fetch(assetUrl('fixed_trial_groups.json'), { cache: 'no-store' });
+  if (!response.ok) throw new Error('The fixed participant sets are unavailable.');
+  const manifest = await response.json() as FixedTrialGroupsManifest;
+  const groups = manifest.tests?.[FIXED_GROUP_TEST_KEYS[type]]?.groups;
+  if (!Array.isArray(groups) || groups.length !== manifest.group_count || manifest.group_size !== 50) throw new Error('The fixed participant-set manifest is invalid.');
+  const encodedBatch = /^batch:set_(\d{2})(?::|$)/.exec(assignmentSeed);
+  let groupIndex: number;
+  if (encodedBatch) {
+    groupIndex = Number(encodedBatch[1]) - 1;
+    if (groupIndex < 0 || groupIndex >= groups.length) throw new Error('The username is assigned to an invalid participant batch.');
+  } else {
+    groupIndex = hashSeed(`${manifest.seed}:${assignmentSeed}`) % groups.length;
+  }
+  const group = groups[groupIndex];
+  if (!group || group.trial_ids.length !== manifest.group_size || new Set(group.trial_ids).size !== manifest.group_size) throw new Error('The assigned participant set is incomplete.');
+  return { setId: group.set_id, trialIds: group.trial_ids };
+}
+function fixedRows<T>(entries: T[], trialIds: string[], id: (entry: T) => string): T[] {
+  const byId = new Map(entries.map((entry) => [id(entry), entry]));
+  const selected = trialIds.map((trialId) => byId.get(trialId));
+  if (selected.some((entry) => entry === undefined)) throw new Error('A fixed participant set references a missing trial.');
+  return selected as T[];
+}
+function materializeFixedPairs(entries: ManifestPair[], assignment: FixedTrialAssignment, seed: string): PairTrial[] {
+  const random = rng(hashSeed(`${seed}:fixed-pairs`));
+  return shuffle(fixedRows(entries, assignment.trialIds, (entry) => entry.pair_id), random).map((pair) => {
+    const swapped = random() < .5;
+    return { pairId: pair.pair_id, stratum: pair.stratum, canonicalPathA: pair.image_path_a, canonicalPathB: pair.image_path_b, displayPathA: swapped ? pair.image_path_b : pair.image_path_a, displayPathB: swapped ? pair.image_path_a : pair.image_path_b, swapped, sameMaterialLikelihood: null, glossChoice: '', metalChoice: '', assignmentSet: assignment.setId };
+  });
+}
+function materializeFixedForcedChoices(entries: ForcedChoiceManifestTrial[], assignment: FixedTrialAssignment, seed: string): ForcedChoiceTrial[] {
+  const random = rng(hashSeed(`${seed}:fixed-forced`));
+  return shuffle(fixedRows(entries, assignment.trialIds, (entry) => entry.trial_id), random).map((entry) => ({ ...entry, selectedOption: '', assignmentSet: assignment.setId }));
+}
+function materializeFixedSceneMatches(entries: SceneMatchingManifestTrial[], assignment: FixedTrialAssignment, seed: string): SceneMatchingTrial[] {
+  const random = rng(hashSeed(`${seed}:fixed-scenes`));
+  return shuffle(fixedRows(entries, assignment.trialIds, (entry) => entry.trial_id), random).map((entry) => ({ ...entry, selectedOption: null, assignmentSet: assignment.setId }));
+}
+function materializeFixedSets(entries: SelectionManifestTrial[], assignment: FixedTrialAssignment, seed: string): SelectionTrial[] {
+  const random = rng(hashSeed(`${seed}:fixed-selection`));
+  return shuffle(fixedRows(entries, assignment.trialIds, (entry) => entry.trial_id), random).map((entry) => {
+    if (entry.candidates.length < SELECTION_DISPLAY_COUNT || new Set(entry.candidates.map((candidate) => candidate.candidate_id)).size !== entry.candidates.length) throw new Error(`${entry.trial_id} must contain at least ${SELECTION_DISPLAY_COUNT} unique candidates.`);
+    return { ...entry, candidates: shuffle(entry.candidates, random).slice(0, SELECTION_DISPLAY_COUNT), selectedCandidateIds: [], assignmentSet: assignment.setId };
+  });
+}
+function insertSentinels<T>(regular: T[], sentinels: T[], positions: number[]): T[] {
+  if (sentinels.length !== positions.length || new Set(positions).size !== positions.length || positions.some((position) => !Number.isInteger(position) || position < 1 || position > regular.length + sentinels.length)) throw new Error('The sentinel positions are invalid.');
+  const result = [...regular];
+  [...positions].sort((a, b) => a - b).forEach((position, index) => result.splice(position - 1, 0, sentinels[index]));
+  return result;
+}
+function sentinelImage(sentinelId: string, role: string, imagePath: string): SelectionImage {
+  return { image_id: `${sentinelId}_${role}`, image_path: imagePath };
+}
+function pairSentinels(config: SentinelConfig, seed: string): PairTrial[] {
+  const random = rng(hashSeed(`${seed}:sentinel-pairs`));
+  return config.tests.test1.map((item) => {
+    const swapped = random() < .5;
+    return { pairId: item.sentinel_id, sentinelId: item.sentinel_id, isSentinel: true, stratum: `sentinel:${item.physical_relation}`, canonicalPathA: item.image_a, canonicalPathB: item.image_b, displayPathA: swapped ? item.image_b : item.image_a, displayPathB: swapped ? item.image_a : item.image_b, swapped, sameMaterialLikelihood: null, glossChoice: '', metalChoice: '' };
+  });
+}
+function forcedChoiceSentinels(config: SentinelConfig): ForcedChoiceTrial[] {
+  return config.tests.test2.map((item) => {
+    const solution = sentinelImage(item.sentinel_id, 'solution', item.solution);
+    const confounder = sentinelImage(item.sentinel_id, 'confounder', item.confounder);
+    return { trial_id: item.sentinel_id, sentinelId: item.sentinel_id, isSentinel: true, difficulty_level: 'sentinel', reference: sentinelImage(item.sentinel_id, 'reference', item.reference), options: item.correct_option === 'A' ? [solution, confounder] : [confounder, solution], correct_option: item.correct_option, selectedOption: '' };
+  });
+}
+function sceneMatchingSentinels(config: SentinelConfig): SceneMatchingTrial[] {
+  return config.tests.test3.map((item) => ({
+    trial_id: item.sentinel_id,
+    sentinelId: item.sentinel_id,
+    isSentinel: true,
+    difficulty_level: 'sentinel',
+    shared_factor: item.shared_factor,
+    target_label: 'R',
+    first_scene: [sentinelImage(item.sentinel_id, 'reference_scene', item.reference_scene)],
+    second_scene: [sentinelImage(item.sentinel_id, 'question_scene', item.question_scene)],
+    selectedOption: null,
+  }));
+}
+function selectionSentinels(config: SentinelConfig, seed: string): SelectionTrial[] {
+  const random = rng(hashSeed(`${seed}:sentinel-selection`));
+  return config.tests.test4.map((item) => {
+    const candidates = item.candidates.map((candidate, index) => ({
+      ...sentinelImage(item.sentinel_id, `candidate_${index + 1}`, candidate.image_path),
+      candidate_id: `${item.sentinel_id}_candidate_${index + 1}`,
+      role: candidate.role,
+      is_same_material: candidate.role === 'solution',
+    }));
+    return { trial_id: item.sentinel_id, sentinelId: item.sentinel_id, isSentinel: true, difficulty_level: 'sentinel', reference_source_type: 'datasetv9', reference: sentinelImage(item.sentinel_id, 'reference', item.reference), candidates: shuffle(candidates, random), positive_count: candidates.filter((candidate) => candidate.is_same_material).length, profile: 'sentinel', selectedCandidateIds: [] };
+  });
+}
+async function loadSentinelConfig(): Promise<SentinelConfig> {
+  const response = await fetch(assetUrl('sentinel_trials.json'), { cache: 'no-store' });
+  if (!response.ok) throw new Error('Sentinel trials are unavailable.');
+  const config = await response.json() as SentinelConfig;
+  if (!Array.isArray(config.positions) || config.positions.length !== 5 || Object.values(config.tests).some((setups) => setups.length !== 5)) throw new Error('The sentinel configuration is incomplete.');
+  return config;
+}
+function csvCell(value: unknown) { const text = value == null ? '' : String(value); return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text; }
+function canonicalRelative(choice: RelativeChoice, swapped: boolean) { if (!choice) return ''; if (choice === 'same') return 0; return choice === 'a' ? (swapped ? 1 : -1) : (swapped ? -1 : 1); }
+function saveCsv(columns: string[], rows: unknown[][], metadata: SessionMetadata, type: StudyType) {
+  const blob = new Blob([[columns, ...rows].map((row) => row.map(csvCell).join(',')).join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `material-constancy-${type}-${metadata.sessionId}.csv`; document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function downloadPairs(trials: PairTrial[], trainingAttempts: PairTrainingAttempt[], demographics: Demographics, skipped: boolean, metadata: SessionMetadata, inhouse = false, assignedBatch = '') {
+  const columns = ['participant_id', 'session_id', 'study_type', 'inhouse', 'assigned_batch', 'study_started_at', 'completed_at', 'trial_number', 'pair_id', 'is_sentinel', 'sentinel_id', 'assignment_set', 'stratum', 'canonical_image_a', 'canonical_image_b', 'swapped', 'same_material_likelihood_1_different_5_same', 'relative_glossiness_b_minus_a', 'relative_metallicness_b_minus_a', 'response_time_ms', 'pair_training_attempts_json', ...demographicColumns(inhouse), 'screen_width', 'screen_height', 'user_agent'];
+  const completedAt = new Date().toISOString();
+  const trainingJson = JSON.stringify(trainingAttempts);
+  saveCsv(columns, trials.map((t, i) => [metadata.participantId, metadata.sessionId, 'pairJudgment', inhouse, assignedBatch, metadata.startedAt, completedAt, i + 1, t.pairId, Boolean(t.isSentinel), t.sentinelId ?? '', t.assignmentSet ?? '', t.stratum, t.canonicalPathA, t.canonicalPathB, t.swapped, t.sameMaterialLikelihood, canonicalRelative(t.glossChoice, t.swapped), canonicalRelative(t.metalChoice, t.swapped), t.responseTimeMs ?? 0, trainingJson, ...demographicsCells(demographics, skipped, inhouse), metadata.screenWidth, metadata.screenHeight, metadata.userAgent]), metadata, 'pairJudgment');
+}
+function downloadForcedChoices(trials: ForcedChoiceTrial[], demographics: Demographics, skipped: boolean, metadata: SessionMetadata, inhouse = false, assignedBatch = '') {
+  const columns = ['participant_id', 'session_id', 'study_type', 'inhouse', 'assigned_batch', 'study_started_at', 'completed_at', 'trial_number', 'trial_id', 'is_sentinel', 'sentinel_id', 'assignment_set', 'difficulty_level', 'reference_image_id', 'reference_image_path', 'option_a_image_id', 'option_a_image_path', 'option_b_image_id', 'option_b_image_path', 'selected_option', 'response_time_ms', ...demographicColumns(inhouse), 'screen_width', 'screen_height', 'user_agent'];
+  const completedAt = new Date().toISOString();
+  saveCsv(columns, trials.map((t, i) => [metadata.participantId, metadata.sessionId, 'forcedChoice', inhouse, assignedBatch, metadata.startedAt, completedAt, i + 1, t.trial_id, Boolean(t.isSentinel), t.sentinelId ?? '', t.assignmentSet ?? '', t.difficulty_level, t.reference.image_id, t.reference.image_path, t.options[0].image_id, t.options[0].image_path, t.options[1].image_id, t.options[1].image_path, t.selectedOption, t.responseTimeMs ?? 0, ...demographicsCells(demographics, skipped, inhouse), metadata.screenWidth, metadata.screenHeight, metadata.userAgent]), metadata, 'forcedChoice');
+}
+function downloadSceneMatches(trials: SceneMatchingTrial[], demographics: Demographics, skipped: boolean, metadata: SessionMetadata, inhouse = false, assignedBatch = '') {
+  const columns = ['participant_id', 'session_id', 'study_type', 'inhouse', 'assigned_batch', 'study_started_at', 'completed_at', 'trial_number', 'trial_id', 'is_sentinel', 'sentinel_id', 'assignment_set', 'shared_factor', 'target_label', 'first_scene_image_ids_json', 'second_scene_image_ids_json', 'selected_option', 'response_time_ms', ...demographicColumns(inhouse), 'screen_width', 'screen_height', 'user_agent'];
+  const completedAt = new Date().toISOString();
+  saveCsv(columns, trials.map((t, i) => [metadata.participantId, metadata.sessionId, 'sceneMatching', inhouse, assignedBatch, metadata.startedAt, completedAt, i + 1, t.trial_id, Boolean(t.isSentinel), t.sentinelId ?? '', t.assignmentSet ?? '', t.shared_factor, t.target_label, JSON.stringify(t.first_scene.map((image) => image.image_id)), JSON.stringify(t.second_scene.map((image) => image.image_id)), t.selectedOption, t.responseTimeMs ?? 0, ...demographicsCells(demographics, skipped, inhouse), metadata.screenWidth, metadata.screenHeight, metadata.userAgent]), metadata, 'sceneMatching');
+}
+function downloadSets(trials: SelectionTrial[], demographics: Demographics, skipped: boolean, metadata: SessionMetadata, inhouse = false, assignedBatch = '') {
+  const columns = ['participant_id', 'session_id', 'study_type', 'inhouse', 'assigned_batch', 'study_started_at', 'completed_at', 'trial_number', 'trial_id', 'is_sentinel', 'sentinel_id', 'assignment_set', 'reference_image_id', 'reference_image_path', 'candidate_order_json', 'selected_candidate_ids_json', 'selected_count', 'response_time_ms', ...demographicColumns(inhouse), 'screen_width', 'screen_height', 'user_agent'];
+  const completedAt = new Date().toISOString();
+  saveCsv(columns, trials.map((t, i) => [metadata.participantId, metadata.sessionId, 'selection', inhouse, assignedBatch, metadata.startedAt, completedAt, i + 1, t.trial_id, Boolean(t.isSentinel), t.sentinelId ?? '', t.assignmentSet ?? '', t.reference.image_id, t.reference.image_path, JSON.stringify(t.candidates.map((c) => c.candidate_id)), JSON.stringify(t.selectedCandidateIds), t.selectedCandidateIds.length, t.responseTimeMs ?? 0, ...demographicsCells(demographics, skipped, inhouse), metadata.screenWidth, metadata.screenHeight, metadata.userAgent]), metadata, 'selection');
+}
+
+function submissionTrials(type: StudyType, pairs: PairTrial[], forced: ForcedChoiceTrial[], scenes: SceneMatchingTrial[], sets: SelectionTrial[]): SubmissionTrial[] {
+  if (type === 'pairJudgment') return pairs.map((trial, index) => ({
+    trialNumber: index + 1, trialId: trial.pairId, responseTimeMs: trial.responseTimeMs ?? 0, isSentinel: Boolean(trial.isSentinel), sentinelId: trial.sentinelId,
+    response: { assignmentSet: trial.assignmentSet, stratum: trial.stratum, canonicalPathA: trial.canonicalPathA, canonicalPathB: trial.canonicalPathB, displayPathA: trial.displayPathA, displayPathB: trial.displayPathB, swapped: trial.swapped, sameMaterialLikelihood: trial.sameMaterialLikelihood, glossChoice: trial.glossChoice, metalChoice: trial.metalChoice, canonicalGlossChoice: canonicalRelative(trial.glossChoice, trial.swapped), canonicalMetalChoice: canonicalRelative(trial.metalChoice, trial.swapped) },
+  }));
+  if (type === 'forcedChoice') return forced.map((trial, index) => ({
+    trialNumber: index + 1, trialId: trial.trial_id, responseTimeMs: trial.responseTimeMs ?? 0, isSentinel: Boolean(trial.isSentinel), sentinelId: trial.sentinelId,
+    response: { assignmentSet: trial.assignmentSet, difficultyLevel: trial.difficulty_level, reference: trial.reference, options: trial.options, selectedOption: trial.selectedOption },
+  }));
+  if (type === 'sceneMatching') return scenes.map((trial, index) => ({
+    trialNumber: index + 1, trialId: trial.trial_id, responseTimeMs: trial.responseTimeMs ?? 0, isSentinel: Boolean(trial.isSentinel), sentinelId: trial.sentinelId,
+    response: { assignmentSet: trial.assignmentSet, difficultyLevel: trial.difficulty_level, sharedFactor: trial.shared_factor, targetLabel: trial.target_label, firstScene: trial.first_scene, secondScene: trial.second_scene, selectedOption: trial.selectedOption },
+  }));
+  return sets.map((trial, index) => ({
+    trialNumber: index + 1, trialId: trial.trial_id, responseTimeMs: trial.responseTimeMs ?? 0, isSentinel: Boolean(trial.isSentinel), sentinelId: trial.sentinelId,
+    response: { assignmentSet: trial.assignmentSet, difficultyLevel: trial.difficulty_level, referenceSourceType: trial.reference_source_type, reference: trial.reference, candidates: trial.candidates, selectedCandidateIds: trial.selectedCandidateIds, selectedCount: trial.selectedCandidateIds.length, positiveCount: trial.positive_count, profile: trial.profile },
+  }));
+}
+
+function sentinelErrorCount(type: StudyType, trials: SubmissionTrial[]) {
+  return trials.filter((trial) => trial.isSentinel).reduce((total, trial) => total + sentinelResponseErrors(type, trial), 0);
+}
+
+function sentinelResponseErrors(type: StudyType, trial: SubmissionTrial) {
+  const response = trial.response;
+  if (type === 'pairJudgment') {
+    const expected = PAIR_SENTINEL_ANSWERS.get(trial.sentinelId ?? '');
+    if (!expected) return 0;
+    return [
+      Number(response.sameMaterialLikelihood) !== expected.sameMaterialLikelihood,
+      Number(response.canonicalGlossChoice) !== expected.canonicalGlossChoice,
+      Number(response.canonicalMetalChoice) !== expected.canonicalMetalChoice,
+    ].filter(Boolean).length;
+  }
+  if (type === 'forcedChoice') {
+    return Number(response.selectedOption !== FORCED_SENTINEL_ANSWERS.get(trial.sentinelId ?? ''));
+  }
+  if (type === 'sceneMatching') {
+    return Number(Number(response.selectedOption) !== SCENE_SENTINEL_ANSWERS.get(trial.sentinelId ?? ''));
+  }
+  const candidates = Array.isArray(response.candidates)
+    ? response.candidates as Array<{ candidate_id?: unknown; is_same_material?: unknown }>
+    : [];
+  const selected = new Set(Array.isArray(response.selectedCandidateIds) ? response.selectedCandidateIds.map(String) : []);
+  return candidates.filter((candidate) => selected.has(String(candidate.candidate_id)) !== (candidate.is_same_material === true)).length;
+}
+
+function TutorialExamples({ attribute }: { attribute: 'glossiness' | 'metallicness' }) {
+  const levels = ['low', 'high'] as const;
+  const isGlossiness = attribute === 'glossiness';
+  const group = isGlossiness ? 't01' : 't02';
+  return <div className="tutorial-examples" aria-label={`${attribute} comparisons`}>
+    {levels.map((varyingLevel) => <section key={varyingLevel} className="tutorial-example-column" aria-label={`${varyingLevel} ${attribute}`}>
+      <h3>{varyingLevel === 'low' ? 'Low' : 'High'} {attribute}</h3>
+      <div className="tutorial-column-images">{levels.map((fixedLevel) => {
+        const gloss = isGlossiness ? varyingLevel : fixedLevel;
+        const metal = isGlossiness ? fixedLevel : varyingLevel;
+        return <figure key={fixedLevel}><img src={assetUrl(`tutorial/${group}_gloss_${gloss}_metallic_${metal}.png`)} alt={`${gloss} glossiness, ${metal} metallicness`} /><figcaption className="sr-only">{gloss} glossiness, {metal} metallicness</figcaption></figure>;
+      })}</div>
+    </section>)}
+  </div>;
+}
+
+function TestingAnswerButton({ visible, ready, shown, onToggle }: { visible: boolean; ready: boolean; shown: boolean; onToggle: () => void }) {
+  if (!visible) return null;
+  return <button className="testing-answer-button" disabled={!ready} onClick={onToggle}><Eye />{ready ? shown ? 'Hide correct answer' : 'Show correct answer' : 'Loading answers…'}</button>;
+}
+function ProlificOutcomeOptions({ url, code, copied, onCopy }: { url: string; code: string; copied: boolean; onCopy: () => void }) {
+  if (!url && !code) return null;
+  return <div className="screen-out-options"><p>To return to Prolific, either click the button below or copy the following code and enter it directly in Prolific.</p>{url && <a className="outcome-action-button" href={url}>Continue to Prolific <ArrowRight /></a>}{code && <div className="prolific-code"><span>Prolific code</span><div className="prolific-code-row"><strong>{code}</strong><button type="button" onClick={onCopy}>{copied ? 'Copied' : 'Copy code'}</button></div></div>}</div>;
+}
+function RelativeQuestion({ attribute, value, onChange }: { attribute: 'more glossy' | 'more metallic'; value: RelativeChoice; onChange: (value: RelativeChoice) => void }) {
+  return <fieldset className="pair-question"><legend>Which surface appears <strong>{attribute}</strong>?</legend><RadioGroup value={value} onValueChange={(next) => onChange(next as RelativeChoice)} className="three-choice-scale">{[{ value: 'a', label: 'A' }, { value: 'same', label: 'Approximately same' }, { value: 'b', label: 'B' }].map((option) => <label className="scale-choice" key={option.value}><RadioGroupItem value={option.value} /><span>{option.label}</span></label>)}</RadioGroup></fieldset>;
+}
+
+function CompositeSceneFigure({ image, labels, selectedOption, correctOption, showCorrectAnswer, onSelect, onZoom }: { image: SelectionImage; labels: string[]; selectedOption?: 1 | 2 | 3 | 4 | null; correctOption?: 1 | 2 | 3 | 4; showCorrectAnswer?: boolean; onSelect?: (option: 1 | 2 | 3 | 4) => void; onZoom: () => void }) {
+  const positions = labels.length === 3 ? [26.667, 50, 73.333] : labels.length === 1 ? [50] : labels.map((_, index) => (index + .5) * 100 / labels.length);
+  return <figure className="composite-scene-sample">
+    <button className="composite-scene-image-button" onClick={onZoom}><img src={studyImageUrl(selectionDisplayPath(image))} alt="Material comparison scene" /></button>
+    <div className="composite-scene-overlays" aria-hidden={!onSelect}>{labels.map((label, index) => {
+      const option = (index + 1) as 1 | 2 | 3 | 4;
+      return <button key={label} type="button" className="composite-scene-label" data-selected={selectedOption === option || undefined} data-correct={showCorrectAnswer && correctOption === option || undefined} style={{ left: `${positions[index]}%` }} disabled={!onSelect} onClick={() => onSelect?.(option)}>{label}</button>;
+    })}</div>
+  </figure>;
 }
 
 export default function App() {
-  const [stage, setStage] = useState<Stage>('welcome');
-  const [consented, setConsented] = useState(false);
-  const [testingMode, setTestingMode] = useState(false);
-  const [demographics, setDemographics] = useState(EMPTY_DEMOGRAPHICS);
-  const [trials, setTrials] = useState<Trial[]>([]);
-  const [index, setIndex] = useState(0);
-  const [studySessionId, setStudySessionId] = useState('');
-  const [preparing, setPreparing] = useState(false);
-  const [prepared, setPrepared] = useState(false);
-  const [preloaded, setPreloaded] = useState(0);
-  const [preloadTotal, setPreloadTotal] = useState(0);
-  const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [showHelp, setShowHelp] = useState(false);
-  const [lightboxPath, setLightboxPath] = useState('');
-  const metadata = useMemo(readStudyMetadata, []);
-  const trialStartedAt = useRef(0);
-  const preparationRun = useRef(0);
-
-  const age = Number(demographics.age);
-  const demographicsComplete = Boolean(
-    demographics.gender &&
-      (demographics.gender !== 'other' || demographics.genderOther.trim()) &&
-      Number.isInteger(age) &&
-      age >= 18 &&
-      age <= 100 &&
-      demographics.computerGraphicsKnowledge &&
-      demographics.designModelingExperience &&
-      demographics.artisticExperience,
-  );
-  const expectedTrials = testingMode
-    ? TEST_PAIR_TRIALS + TEST_REFERENCE_TRIALS
-    : PAIR_TRIALS_PER_SESSION + REFERENCE_TRIALS_PER_SESSION;
-  const current = trials[index];
-  const currentComplete = current
-    ? current.type === 'pair'
-      ? current.sameMaterialLikelihood !== null &&
-        current.glossChoice !== '' &&
-        current.metalChoice !== ''
-      : Boolean(current.selectedCandidatePath)
-    : false;
+  const directTesting = isTestingRoute(); const previewMode = isPreviewRoute(); const inhouseRoute = isInhouseRoute(); const assignedStudyType = inhouseRoute ? 'pairJudgment' : directStudyType();
+  const prolific = useMemo(readProlificIdentifiers, []);
+  const initialClientMetadata = useMemo(collectClientMetadata, []);
+  const metadata = useMemo(() => readSessionMetadata(prolific.prolificPid), [prolific.prolificPid]);
+  const [stage, setStage] = useState<Stage>(directTesting ? 'chooser' : previewMode ? 'welcome' : inhouseRoute ? 'inhouse_loading' : assignedStudyType ? 'login' : 'invalid'); const [studyType, setStudyType] = useState<StudyType | null>(assignedStudyType);
+  const [authSession, setAuthSession] = useState<AuthenticatedStudySession | null>(null);
+  const inhouseCredentials = useRef<InhouseCredentials | null>(null);
+  const [pendingSubmission, setPendingSubmission] = useState<StudySubmission | null>(null);
+  const [pendingScreenOut, setPendingScreenOut] = useState<StudyScreenOut | null>(null);
+  const [submissionError, setSubmissionError] = useState('');
+  const [demographicsSaving, setDemographicsSaving] = useState(false);
+  const [demographicsSaveError, setDemographicsSaveError] = useState('');
+  const [redirectError, setRedirectError] = useState('');
+  const [outcomeUrl, setOutcomeUrl] = useState('');
+  const [outcomeCode, setOutcomeCode] = useState('');
+  const [outcomeCodeCopied, setOutcomeCodeCopied] = useState(false);
+  const [fallbackCsvDownloaded, setFallbackCsvDownloaded] = useState(false);
+  const [fallbackCompletion, setFallbackCompletion] = useState(false);
+  const [receiptId, setReceiptId] = useState('');
+  const [consented, setConsented] = useState(false); const [demographics, setDemographics] = useState(EMPTY_DEMOGRAPHICS); const [demographicsSkipped, setDemographicsSkipped] = useState(directTesting);
+  const [pairTrials, setPairTrials] = useState<PairTrial[]>([]); const [forcedChoiceTrials, setForcedChoiceTrials] = useState<ForcedChoiceTrial[]>([]); const [sceneMatchingTrials, setSceneMatchingTrials] = useState<SceneMatchingTrial[]>([]); const [selectionTrials, setSelectionTrials] = useState<SelectionTrial[]>([]); const [index, setIndex] = useState(0);
+  const [pairTrainingAttempts, setPairTrainingAttempts] = useState<PairTrainingAttempt[]>([]);
+  const [trainingExamples, setTrainingExamples] = useState<SceneMatchingTrainingExample[]>([]); const [trainingIndex, setTrainingIndex] = useState(0); const [trainingChoice, setTrainingChoice] = useState<1 | 2 | 3 | 4 | null>(null); const [trainingRevealed, setTrainingRevealed] = useState(false); const [trainingIncorrect, setTrainingIncorrect] = useState(false);
+  const [preparing, setPreparing] = useState(false); const [prepared, setPrepared] = useState(false); const [error, setError] = useState('');
+  const [showHelp, setShowHelp] = useState(false); const [lightboxPath, setLightboxPath] = useState(''); const [selectionLimitNotice, setSelectionLimitNotice] = useState(false); const trialStartedAt = useRef(0); const selectionLimitTimer = useRef<number | null>(null);
+  const [testingGroundTruth, setTestingGroundTruth] = useState<TestingGroundTruth | null>(null); const [showCorrectAnswer, setShowCorrectAnswer] = useState(false);
+  const preparationId = useRef(0); const automaticPreparationStarted = useRef(false);
+  const automaticInhouseLoginStarted = useRef(false);
+  const testingMode = isTestingMode();
+  const inhouse = authSession?.inhouse === true;
+  const assignedBatch = authSession?.assignmentBatch ?? '';
+  const inhouseTaskIndex = studyType ? INHOUSE_STUDY_ORDER.indexOf(studyType) : -1;
+  const finalUploadFallbackAvailable = !inhouse || inhouseTaskIndex === INHOUSE_STUDY_ORDER.length - 1;
+  const demographicsComplete = isDemographicsComplete(demographics, inhouse);
+  const currentPair = pairTrials[index]; const currentForcedChoice = forcedChoiceTrials[index]; const currentSceneMatching = sceneMatchingTrials[index]; const currentSelection = selectionTrials[index];
+  const correctPairAnswer = currentPair ? testingGroundTruth?.pairs[currentPair.pairId] : undefined;
+  const correctForcedChoice = currentForcedChoice ? testingGroundTruth?.forced_choices[currentForcedChoice.trial_id] : undefined;
+  const correctSceneMatch = currentSceneMatching ? testingGroundTruth?.scene_matches[currentSceneMatching.trial_id] : undefined;
+  const correctSelectionIds = new Set(currentSelection ? testingGroundTruth?.selections[currentSelection.trial_id] ?? [] : []);
+  const activeCount = studyType === 'selection' ? selectionTrials.length : studyType === 'sceneMatching' ? sceneMatchingTrials.length : studyType === 'forcedChoice' ? forcedChoiceTrials.length : pairTrials.length;
+  const pairComplete = Boolean(currentPair && currentPair.sameMaterialLikelihood !== null && currentPair.glossChoice && currentPair.metalChoice);
 
   useEffect(() => {
     window.scrollTo(0, 0);
-  }, [stage]);
-
+  }, [stage, index, trainingIndex]);
   useEffect(() => {
-    if (!lightboxPath) return;
-    const previous = document.body.style.overflow;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setLightboxPath('');
+    // Keep the original asset URL out of the browser's ordinary image context
+    // menu. This is deliberately a usability deterrent rather than a security
+    // boundary: the URL remains available to someone inspecting network traffic.
+    const isProtectedStimulus = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return false;
+      if (target.closest('.study-shell img')) return true;
+      const imageButton = target.closest('.study-shell button');
+      return Boolean(imageButton?.querySelector('img'));
     };
-    document.body.style.overflow = 'hidden';
-    window.addEventListener('keydown', onKeyDown);
+    const preventContextMenu = (event: MouseEvent) => {
+      if (isProtectedStimulus(event.target)) event.preventDefault();
+    };
+    const preventImageDrag = (event: DragEvent) => {
+      if (isProtectedStimulus(event.target)) event.preventDefault();
+    };
+    document.addEventListener('contextmenu', preventContextMenu, true);
+    document.addEventListener('dragstart', preventImageDrag, true);
     return () => {
-      document.body.style.overflow = previous;
-      window.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('contextmenu', preventContextMenu, true);
+      document.removeEventListener('dragstart', preventImageDrag, true);
     };
-  }, [lightboxPath]);
-
-  async function prepareStudy() {
-    const run = preparationRun.current + 1;
-    preparationRun.current = run;
-    setPreparing(true);
-    setPrepared(false);
-    setError('');
-    setPreloaded(0);
-    try {
-      let claimed: ClaimedSession;
-      if (testingMode) {
-        const response = await fetch(assetUrl('constancy_preview.json'));
-        if (!response.ok) throw new Error('Preview manifest unavailable.');
-        const preview = (await response.json()) as PreviewManifest;
-        claimed = {
-          study_session_id: 'testing',
-          pair_trials: preview.pairs.slice(0, TEST_PAIR_TRIALS).map((pair, trial) => ({
-            pair_id: pair.pair_id,
-            trial_number: trial + 1,
-            swap_ab: Math.random() < 0.5,
-            image_path_a: pair.image_path_a,
-            image_path_b: pair.image_path_b,
-          })),
-          reference_trials: preview.references
-            .slice(0, TEST_REFERENCE_TRIALS)
-            .map((reference, trial) => ({
-              reference_id: reference.reference_id,
-              reference_path: reference.reference_path,
-              candidate_order: shuffle(reference.candidate_paths),
-              trial_number: trial + 1,
-            })),
-        };
-      } else {
-        claimed = await claimConstancySession(metadata, {
-          gender: demographics.gender,
-          gender_other:
-            demographics.gender === 'other'
-              ? demographics.genderOther.trim()
-              : null,
-          age,
-          computer_graphics_knowledge: demographics.computerGraphicsKnowledge,
-          design_modeling_experience: demographics.designModelingExperience,
-          artistic_experience: demographics.artisticExperience,
-        });
-      }
-      if (
-        claimed.pair_trials.length !== (testingMode ? TEST_PAIR_TRIALS : PAIR_TRIALS_PER_SESSION) ||
-        claimed.reference_trials.length !==
-          (testingMode ? TEST_REFERENCE_TRIALS : REFERENCE_TRIALS_PER_SESSION)
-      ) {
-        throw new Error('The server returned an incomplete assignment.');
-      }
-      const nextTrials = buildTrials(claimed);
-      const urls = nextTrials.flatMap((trial) =>
-        trial.type === 'pair'
-          ? [stimulusUrl(trial.displayPathA), stimulusUrl(trial.displayPathB)]
-          : [stimulusUrl(trial.referencePath), ...trial.candidateOrder.map(stimulusUrl)],
-      );
-      setPreloadTotal(new Set(urls).size);
-      await preloadImages(urls, (count) => {
-        if (preparationRun.current === run) setPreloaded(count);
-      });
-      if (preparationRun.current !== run) return;
-      setTrials(nextTrials);
-      setStudySessionId(claimed.study_session_id);
-      setPrepared(true);
-    } catch (cause) {
-      if (preparationRun.current !== run) return;
-      setError(cause instanceof Error ? cause.message : 'The study could not be prepared.');
-    } finally {
-      if (preparationRun.current === run) setPreparing(false);
-    }
-  }
-
-  function openTutorial() {
-    if (!demographicsComplete) return;
-    setStage('tutorial');
-    void prepareStudy();
-  }
-
-  function startStudy() {
-    if (!prepared) return;
-    setIndex(0);
-    trialStartedAt.current = performance.now();
-    setStage('study');
-  }
-
-  function updateCurrent(update: Partial<PairTrial> | Partial<ReferenceTrial>) {
-    setTrials((previous) =>
-      previous.map((trial, trialIndex) =>
-        trialIndex === index ? ({ ...trial, ...update } as Trial) : trial,
-      ),
-    );
-  }
-
-  function canonicalRelative(choice: RelativeChoice, swapped: boolean) {
-    if (choice === 'same') return 0;
-    if (choice === 'a') return swapped ? 1 : -1;
-    return swapped ? -1 : 1;
-  }
-
-  async function finishStudy(completedTrials: Trial[]) {
-    if (testingMode) {
-      localStorage.setItem('material-constancy-last-test', JSON.stringify(completedTrials));
-      setStage('complete');
-      return;
-    }
-    setSubmitting(true);
-    setError('');
-    try {
-      await submitConstancySession(
-        studySessionId,
-        metadata.participantId,
-        completedTrials
-          .filter((trial): trial is PairTrial => trial.type === 'pair')
-          .map((trial) => ({
-            pair_id: trial.pairId,
-            same_material_likelihood: trial.sameMaterialLikelihood!,
-            relative_glossiness: canonicalRelative(trial.glossChoice, trial.swapped),
-            relative_metallicness: canonicalRelative(trial.metalChoice, trial.swapped),
-            response_time_ms: trial.responseTimeMs ?? 0,
-          })),
-        completedTrials
-          .filter((trial): trial is ReferenceTrial => trial.type === 'reference')
-          .map((trial) => ({
-            reference_id: trial.referenceId,
-            candidate_order: trial.candidateOrder,
-            selected_candidate_path: trial.selectedCandidatePath,
-            response_time_ms: trial.responseTimeMs ?? 0,
-          })),
-      );
-      setStage('complete');
-    } catch {
-      setError('Your responses could not be saved. Please try again without closing this page.');
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  function continueStudy() {
-    if (!currentComplete || submitting) return;
-    const elapsed = Math.round(performance.now() - trialStartedAt.current);
-    const completedTrials = trials.map((trial, trialIndex) =>
-      trialIndex === index ? { ...trial, responseTimeMs: elapsed } : trial,
-    );
-    setTrials(completedTrials);
-    setShowHelp(false);
-    if (index === completedTrials.length - 1) {
-      void finishStudy(completedTrials);
-      return;
-    }
-    setIndex((previous) => previous + 1);
-    trialStartedAt.current = performance.now();
-  }
-
+  }, []);
   useEffect(() => {
-    const context = (document as Document & { modelContext?: ModelContext }).modelContext;
-    if (!context?.registerTool) return;
-    const lifecycle = new AbortController();
-    const register = async () => {
-      await context.registerTool(
-        {
-          name: 'read_constancy_study_status',
-          title: 'Read material constancy study status',
-          description: 'Read the visible stage and progress without changing any response.',
-          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-          annotations: { readOnlyHint: true, untrustedContentHint: false },
-          execute: () => ({
-            stage,
-            currentTrial: stage === 'study' ? index + 1 : null,
-            totalTrials: expectedTrials,
-            imagesReady: prepared,
-            testingMode,
-          }),
-        },
-        { signal: lifecycle.signal },
-      );
-      await context.registerTool(
-        {
-          name: 'continue_constancy_study',
-          title: 'Continue material constancy study',
-          description: 'Continue from consent, demographics, or instructions when requirements are met.',
-          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-          annotations: { readOnlyHint: false, untrustedContentHint: false },
-          execute: () => {
-            if (stage === 'welcome') {
-              if (!consented) throw new Error('Consent must be accepted before continuing.');
-              setStage('demographics');
-              return { stage: 'demographics' };
-            }
-            if (stage === 'demographics') {
-              if (!demographicsComplete) {
-                throw new Error('The demographic questionnaire must be completed manually.');
-              }
-              openTutorial();
-              return { stage: 'tutorial' };
-            }
-            if (stage === 'tutorial') {
-              if (!prepared) throw new Error('The study images are still loading.');
-              startStudy();
-              return { stage: 'study', totalTrials: expectedTrials };
-            }
-            throw new Error('The study cannot be continued from the current stage.');
-          },
-        },
-        { signal: lifecycle.signal },
-      );
-    };
-    void register().catch(() => undefined);
-    return () => lifecycle.abort();
-  }, [consented, demographicsComplete, expectedTrials, index, prepared, stage, testingMode]);
+    const initialType = authSession?.inhouse ? studyType : assignedStudyType;
+    if (!initialType || (!directTesting && !authSession) || automaticPreparationStarted.current) return;
+    automaticPreparationStarted.current = true;
+    void prepare(initialType, authSession?.assignmentSeed);
+  }, [assignedStudyType, authSession, directTesting, studyType]);
+  useEffect(() => {
+    if (!inhouseRoute || automaticInhouseLoginStarted.current) return;
+    automaticInhouseLoginStarted.current = true;
+    void enterInhouse();
+  }, [inhouseRoute]);
+  useEffect(() => {
+    if (!directTesting) return;
+    let cancelled = false;
+    void fetch(assetUrl('testing_ground_truth.json'), { cache: 'no-store' })
+      .then((response) => { if (!response.ok) throw new Error('Testing answers are unavailable.'); return response.json() as Promise<TestingGroundTruth>; })
+      .then((answers) => { if (!cancelled) setTestingGroundTruth(answers); })
+      .catch((cause) => console.error('Could not load testing ground truth.', cause));
+    return () => { cancelled = true; };
+  }, [directTesting]);
+  useEffect(() => { if (!lightboxPath) return; const old = document.body.style.overflow; const close = (event: KeyboardEvent) => event.key === 'Escape' && setLightboxPath(''); document.body.style.overflow = 'hidden'; addEventListener('keydown', close); return () => { document.body.style.overflow = old; removeEventListener('keydown', close); }; }, [lightboxPath]);
+  useEffect(() => () => { if (selectionLimitTimer.current !== null) window.clearTimeout(selectionLimitTimer.current); }, []);
+  useEffect(() => {
+    if (stage !== 'study' || studyType !== 'selection') return;
+    const windowTrials = selectionTrials.slice(index, index + 3);
+    const urls = windowTrials.flatMap((trial) => [studyImageUrl(selectionDisplayPath(trial.reference)), ...trial.candidates.map((candidate) => studyImageUrl(selectionDisplayPath(candidate)))]);
+    void preloadImages(urls).catch((cause) => console.warn('A look-ahead thumbnail could not be preloaded after retries.', cause));
+  }, [stage, studyType, index]);
+  useEffect(() => {
+    if (stage !== 'study' || studyType !== 'sceneMatching') return;
+    const urls = sceneMatchingTrials.slice(index, index + 3).flatMap((trial) => [...trial.first_scene, ...trial.second_scene].map((image) => studyImageUrl(selectionDisplayPath(image))));
+    void preloadImages(urls).catch((cause) => console.warn('A four-material thumbnail could not be preloaded after retries.', cause));
+  }, [stage, studyType, index, sceneMatchingTrials]);
+  useEffect(() => {
+    if (stage !== 'study' || studyType !== 'forcedChoice') return;
+    const urls = forcedChoiceTrials.slice(index, index + 3).flatMap((trial) => [stimulusUrl(trial.reference.image_path), ...trial.options.map((option) => stimulusUrl(option.image_path))]);
+    void preloadImages(urls).catch((cause) => console.warn('A reference-matching image could not be preloaded after retries.', cause));
+  }, [stage, studyType, index, forcedChoiceTrials]);
+  useEffect(() => {
+    if (stage !== 'study' || studyType !== 'pairJudgment') return;
+    const urls = pairTrials.slice(index, index + 3).flatMap((trial) => [stimulusUrl(trial.displayPathA), stimulusUrl(trial.displayPathB)]);
+    void preloadImages(urls).catch((cause) => console.warn('A pair image could not be preloaded after retries.', cause));
+  }, [stage, studyType, index, pairTrials]);
 
-  if (stage === 'welcome') {
-    return (
-      <main className="study-shell welcome-shell">
-        <section className="welcome-card" aria-labelledby="study-title">
-          <div className="study-mark" aria-hidden="true"><span /><span /><span /></div>
-          <h1 id="study-title">Visual Perception Study</h1>
-          <p className="lead">Thank you for taking part in this user study.</p>
+  async function prepare(type: StudyType, assignmentSeedOverride?: string) {
+    const requestId = ++preparationId.current;
+    // Production assignments come from the credential stored in D1. Preview
+    // and testing always use set_01; short testing sessions are balanced
+    // subsets of that same fixed set rather than draws from the full bank.
+    const sampleMode = testingMode || previewMode;
+    const assignmentSeed = sampleMode ? 'batch:set_01:preview-testing' : assignmentSeedOverride ?? authSession?.assignmentSeed ?? metadata.sessionId;
+    const sampleSeed = `${assignmentSeed}:${metadata.sessionId}:${type}`;
+    setPreparing(true); setPrepared(false); setError('');
+    try {
+      const [sentinelConfig, fixedAssignment] = await Promise.all([
+        sampleMode ? Promise.resolve(null) : loadSentinelConfig(),
+        loadFixedTrialGroup(type, assignmentSeed),
+      ]);
+      if (type === 'selection') {
+        const response = await fetch(assetUrl('selection_trials.json'), { cache: 'no-store' });
+        if (!response.ok) throw new Error('Selection trials are not available yet. Generate them after datasetv7 and G90 are complete.');
+        const payload = await response.json() as { trials?: SelectionManifestTrial[] } | SelectionManifestTrial[]; const entries = Array.isArray(payload) ? payload : payload.trials ?? [];
+        const requested = trialCount(type);
+        const fixedEntries = fixedRows(entries, fixedAssignment.trialIds, (entry) => entry.trial_id);
+        let selected = sampleMode && requested < fixedAssignment.trialIds.length ? selectSets(fixedEntries, requested, sampleSeed) : materializeFixedSets(entries, fixedAssignment, sampleSeed);
+        if (sentinelConfig) selected = insertSentinels(selected, selectionSentinels(sentinelConfig, sampleSeed), sentinelConfig.positions);
+        if (fixedAssignment) selected = selected.map((trial) => ({ ...trial, assignmentSet: fixedAssignment.setId }));
+        const urls = selected.slice(0, 1).flatMap((t) => [studyImageUrl(selectionDisplayPath(t.reference)), ...t.candidates.map((c) => studyImageUrl(selectionDisplayPath(c)))]); await preloadImages(urls); if (requestId !== preparationId.current) return; setSelectionTrials(selected);
+      } else if (type === 'forcedChoice') {
+        const response = await fetch(assetUrl('forced_choice_trials.json'), { cache: 'no-store' });
+        if (!response.ok) throw new Error('Reference-matching trials are unavailable.');
+        const payload = await response.json() as { trials: ForcedChoiceManifestTrial[] };
+        const requested = trialCount(type);
+        const fixedEntries = fixedRows(payload.trials, fixedAssignment.trialIds, (entry) => entry.trial_id);
+        let selected = sampleMode && requested < fixedAssignment.trialIds.length ? selectForcedChoices(fixedEntries, requested, sampleSeed) : materializeFixedForcedChoices(payload.trials, fixedAssignment, sampleSeed);
+        if (sentinelConfig) selected = insertSentinels(selected, forcedChoiceSentinels(sentinelConfig), sentinelConfig.positions);
+        if (fixedAssignment) selected = selected.map((trial) => ({ ...trial, assignmentSet: fixedAssignment.setId }));
+        const urls = selected.slice(0, 1).flatMap((trial) => [stimulusUrl(trial.reference.image_path), ...trial.options.map((option) => stimulusUrl(option.image_path))]);
+        await preloadImages(urls); if (requestId !== preparationId.current) return; setForcedChoiceTrials(selected);
+      } else if (type === 'sceneMatching') {
+        const [response, trainingResponse] = await Promise.all([
+          fetch(assetUrl('scene_matching_trials.json'), { cache: 'no-store' }),
+          fetch(assetUrl('scene_matching_training.json'), { cache: 'no-store' }),
+        ]);
+        if (!response.ok) throw new Error('Four-material trials are unavailable.');
+        if (!trainingResponse.ok) throw new Error('Training examples are unavailable.');
+        const payload = await response.json() as { trials: SceneMatchingManifestTrial[] };
+        const trainingPayload = await trainingResponse.json() as { examples: SceneMatchingTrainingExample[] };
+        const examples = trainingPayload.examples;
+        if (!Array.isArray(examples) || examples.length !== 4 || examples.some((example) => example.target_label !== 'R' || example.first_scene.length !== 1 || example.second_scene.length !== 1 || example.correct_option < 1 || example.correct_option > 3)) {
+          throw new Error('The training examples are incomplete.');
+        }
+        const requested = trialCount(type);
+        const fixedEntries = fixedRows(payload.trials, fixedAssignment.trialIds, (entry) => entry.trial_id);
+        let selected = sampleMode && requested < fixedAssignment.trialIds.length ? selectSceneMatches(fixedEntries, requested, sampleSeed) : materializeFixedSceneMatches(payload.trials, fixedAssignment, sampleSeed);
+        if (sentinelConfig) selected = insertSentinels(selected, sceneMatchingSentinels(sentinelConfig), sentinelConfig.positions);
+        if (fixedAssignment) selected = selected.map((trial) => ({ ...trial, assignmentSet: fixedAssignment.setId }));
+        const urls = [...selected.slice(0, 1), ...examples].flatMap((trial) => [...trial.first_scene, ...trial.second_scene].map((image) => studyImageUrl(selectionDisplayPath(image))));
+        await preloadImages(urls); if (requestId !== preparationId.current) return; setSceneMatchingTrials(selected); setTrainingExamples(examples);
+      } else {
+        const response = await fetch(assetUrl('study_pairs.json'), { cache: 'no-store' }); if (!response.ok) throw new Error('The local pair manifest is unavailable.');
+        const entries = await response.json() as ManifestPair[];
+        const requested = trialCount(type);
+        const fixedEntries = fixedRows(entries, fixedAssignment.trialIds, (entry) => entry.pair_id);
+        let selected = sampleMode && requested < fixedAssignment.trialIds.length ? selectPairs(fixedEntries, requested, sampleSeed) : materializeFixedPairs(entries, fixedAssignment, sampleSeed);
+        if (sentinelConfig) selected = insertSentinels(selected, pairSentinels(sentinelConfig, sampleSeed), sentinelConfig.positions);
+        if (fixedAssignment) selected = selected.map((trial) => ({ ...trial, assignmentSet: fixedAssignment.setId }));
+        const urls = [...selected.slice(0, 1).flatMap((t) => [stimulusUrl(t.displayPathA), stimulusUrl(t.displayPathB)]), ...PAIR_TRAINING_EXAMPLES.flatMap((example) => [assetUrl(example.imageA), assetUrl(example.imageB)])]; await preloadImages(urls); if (requestId !== preparationId.current) return; setPairTrials(selected);
+      }
+      setPrepared(true);
+    } catch (cause) { if (requestId === preparationId.current) setError(cause instanceof Error ? cause.message : 'The study could not be prepared.'); } finally { if (requestId === preparationId.current) setPreparing(false); }
+  }
+  function choose(type: StudyType) { setShowCorrectAnswer(false); setStudyType(type); setStage('instructions'); void prepare(type); }
+  async function nextAvailableInhouseSession(startIndex: number, credentials: InhouseCredentials) {
+    const completed: StudyType[] = [];
+    let lastAuthenticated: AuthenticatedStudySession | null = null;
+    for (let position = startIndex; position < INHOUSE_STUDY_ORDER.length; position += 1) {
+      const type = INHOUSE_STUDY_ORDER[position];
+      const authenticated = await loginToStudy({
+        username: credentials.username,
+        password: credentials.password,
+        prolific,
+        studyType: type,
+        clientSessionId: inhouseSessionId(credentials.runId, type),
+        inhouseRunId: credentials.runId,
+        startedAt: metadata.startedAt,
+        clientMetadata: initialClientMetadata,
+      });
+      lastAuthenticated = authenticated;
+      if (!authenticated.inhouse) throw new Error('The in-house study account could not be verified.');
+      if (!authenticated.alreadyCompleted) return { authenticated, type, completed, lastAuthenticated };
+      completed.push(type);
+    }
+    return { authenticated: null, type: null, completed, lastAuthenticated };
+  }
+  async function login(username: string, password: string) {
+    if (!assignedStudyType) throw new Error('This link does not identify a study task.');
+    if (normalizedLoginName(username) === 'gilab-inhouse') {
+      const credentials = { username, password, runId: inhouseRunId(metadata.sessionId) };
+      inhouseCredentials.current = credentials;
+      const next = await nextAvailableInhouseSession(0, credentials);
+      if (!next.authenticated || !next.type) {
+        setAuthSession(next.lastAuthenticated);
+        setStudyType(INHOUSE_STUDY_ORDER[INHOUSE_STUDY_ORDER.length - 1]);
+        setReceiptId('All four tests stored');
+        setStage('complete');
+        return;
+      }
+      setStudyType(next.type);
+      setAuthSession(next.authenticated);
+      setReceiptId(next.authenticated.screenOutReceiptId ?? '');
+      if (next.authenticated.screenedOut) {
+        setStage('screening');
+        await showOutcomeScreen(next.type, 'screen_out');
+      } else setStage('welcome');
+      return;
+    }
+    const authenticated = await loginToStudy({ username, password, prolific, studyType: assignedStudyType, clientSessionId: metadata.sessionId, startedAt: metadata.startedAt, clientMetadata: initialClientMetadata });
+    setAuthSession(authenticated);
+    if (authenticated.screenedOut) {
+      setReceiptId(authenticated.screenOutReceiptId ?? '');
+      setStage('screening');
+      await showOutcomeScreen(assignedStudyType, 'screen_out');
+      return;
+    }
+    if (authenticated.alreadyCompleted) {
+      if (!authenticated.receiptId) throw new Error('The study is already complete, but its receipt could not be loaded. Please contact the study organiser.');
+      setReceiptId(authenticated.receiptId);
+      setStage('submitting');
+      await showOutcomeScreen(assignedStudyType, 'completion');
+      return;
+    }
+    setStage('welcome');
+  }
+  async function enterInhouse() {
+    setSubmissionError('');
+    try {
+      await login('gilab-inhouse', 'gilab-inhouse');
+    } catch (cause) {
+      setSubmissionError(cause instanceof Error ? cause.message : 'The in-house study could not be opened.');
+    }
+  }
+  function start() { if (!prepared) return; setIndex(0); if (studyType === 'pairJudgment') { setStage('training'); return; } if (studyType === 'sceneMatching') { setTrainingIndex(0); setTrainingChoice(null); setTrainingRevealed(false); setTrainingIncorrect(false); setStage('training'); return; } trialStartedAt.current = performance.now(); setStage('study'); }
+  async function continueFromDemographics(skipped: boolean) {
+    setDemographicsSkipped(skipped);
+    setDemographicsSaveError('');
+    localStorage.setItem(`material-constancy-${metadata.sessionId}`, JSON.stringify({ metadata, demographics, demographicsSkipped: skipped, studyType, pairTrainingAttempts, pairTrials, forcedChoiceTrials, sceneMatchingTrials, selectionTrials }));
+    if (directTesting || previewMode) { setStage('explanation'); return; }
+    if (!authSession || !studyType) { setDemographicsSaveError('Your authenticated session is missing. Please sign in again.'); return; }
+    setDemographicsSaving(true);
+    try {
+      await saveStudyDemographics(authSession.token, {
+        schemaVersion: '2026-10-20.2',
+        sessionId: authSession.sessionId,
+        studyType,
+        demographicsSkipped: skipped,
+        demographics: demographicsPayload(demographics, inhouse),
+        clientMetadata: collectClientMetadata(),
+      });
+      setStage('explanation');
+    } catch (cause) {
+      setDemographicsSaveError(cause instanceof Error ? cause.message : 'The demographic information could not be saved. Please try again.');
+    } finally {
+      setDemographicsSaving(false);
+    }
+  }
+  function advanceTraining() { if (!trainingRevealed || trainingChoice !== trainingExamples[trainingIndex]?.correct_option) return; if (trainingIndex + 1 < trainingExamples.length) { setTrainingIndex((value) => value + 1); setTrainingChoice(null); setTrainingRevealed(false); setTrainingIncorrect(false); return; } setIndex(0); trialStartedAt.current = performance.now(); setStage('study'); }
+  function recordPairTrainingAttempt(attempt: PairTrainingAttempt) {
+    setPairTrainingAttempts((current) => {
+      const next = [...current, attempt];
+      localStorage.setItem(`material-constancy-${metadata.sessionId}`, JSON.stringify({ metadata, demographics, demographicsSkipped, studyType, pairTrainingAttempts: next, pairTrials, forcedChoiceTrials, sceneMatchingTrials, selectionTrials }));
+      return next;
+    });
+  }
+  function updatePair(update: Partial<PairTrial>) { setPairTrials((all) => all.map((trial, i) => i === index ? { ...trial, ...update } : trial)); }
+  function clearSelectionLimitNotice() { setSelectionLimitNotice(false); if (selectionLimitTimer.current !== null) { window.clearTimeout(selectionLimitTimer.current); selectionLimitTimer.current = null; } }
+  function showSelectionLimitNotice() { clearSelectionLimitNotice(); setSelectionLimitNotice(true); selectionLimitTimer.current = window.setTimeout(() => { setSelectionLimitNotice(false); selectionLimitTimer.current = null; }, 2200); }
+  function toggleCandidate(id: string) {
+    if (!currentSelection) return;
+    const alreadySelected = currentSelection.selectedCandidateIds.includes(id);
+    if (!alreadySelected && currentSelection.selectedCandidateIds.length >= MAX_SELECTIONS) { showSelectionLimitNotice(); return; }
+    setSelectionTrials((all) => all.map((trial, i) => i === index ? { ...trial, selectedCandidateIds: alreadySelected ? trial.selectedCandidateIds.filter((value) => value !== id) : [...trial.selectedCandidateIds, id] } : trial));
+  }
+  function downloadCurrent() {
+    if (studyType === 'selection') downloadSets(selectionTrials, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
+    else if (studyType === 'sceneMatching') downloadSceneMatches(sceneMatchingTrials, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
+    else if (studyType === 'forcedChoice') downloadForcedChoices(forcedChoiceTrials, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
+    else downloadPairs(pairTrials, pairTrainingAttempts, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
+  }
+  async function showOutcomeScreen(type: StudyType, outcome: 'completion' | 'screen_out') {
+    const configurationErrors: string[] = [];
+    setOutcomeUrl('');
+    setOutcomeCode('');
+    setOutcomeCodeCopied(false);
+    try {
+      setOutcomeUrl(await configuredRedirect(type, outcome));
+    } catch (cause) {
+      configurationErrors.push(cause instanceof Error ? cause.message : 'The configured redirect could not be opened.');
+    }
+    try {
+      setOutcomeCode(await configuredOutcomeCode(type, outcome));
+    } catch (cause) {
+      configurationErrors.push(cause instanceof Error ? cause.message : 'The configured Prolific code could not be loaded.');
+    }
+    setRedirectError(configurationErrors.join(' '));
+    setStage(outcome === 'completion' ? 'complete' : 'screened_out');
+  }
+  async function copyOutcomeCode() {
+    if (!outcomeCode) return;
+    try {
+      await navigator.clipboard.writeText(outcomeCode);
+      setOutcomeCodeCopied(true);
+    } catch {
+      const field = document.createElement('textarea');
+      field.value = outcomeCode;
+      field.style.position = 'fixed';
+      field.style.opacity = '0';
+      document.body.appendChild(field);
+      field.select();
+      const copied = document.execCommand('copy');
+      field.remove();
+      setOutcomeCodeCopied(copied);
+    }
+  }
+  async function uploadSubmission(submission: StudySubmission) {
+    if (!authSession) { setSubmissionError('Your authenticated session is missing. Download the local backup and contact the study organiser.'); return; }
+    const submittedSession = authSession;
+    setSubmissionError('');
+    try {
+      const result = await submitStudy(submittedSession.token, submission);
+      setFallbackCompletion(false);
+      setReceiptId(result.receiptId);
+      if (result.screenedOut) {
+        setPendingSubmission(null);
+        await showOutcomeScreen(submission.studyType as StudyType, 'screen_out');
+        return;
+      }
+      if (submittedSession.inhouse) {
+        const credentials = inhouseCredentials.current;
+        if (!credentials) throw new Error('The in-house study credentials are no longer available. Reload the page and sign in again to continue.');
+        const completedType = submission.studyType as StudyType;
+        const currentPosition = INHOUSE_STUDY_ORDER.indexOf(completedType);
+        const next = await nextAvailableInhouseSession(currentPosition + 1, credentials);
+        if (next.authenticated && next.type) {
+          setAuthSession(next.authenticated);
+          setStudyType(next.type);
+          setIndex(0);
+          setShowHelp(false);
+          setShowCorrectAnswer(false);
+          setTrainingIndex(0);
+          setTrainingChoice(null);
+          setTrainingRevealed(false);
+          setTrainingIncorrect(false);
+          setFallbackCsvDownloaded(false);
+          await prepare(next.type, next.authenticated.assignmentSeed);
+          setPendingSubmission(null);
+          setStage('instructions');
+          return;
+        }
+      }
+      setPendingSubmission(null);
+      if (submittedSession.inhouse) setStage('complete');
+      else await showOutcomeScreen(submission.studyType as StudyType, 'completion');
+    } catch (cause) {
+      setSubmissionError(cause instanceof Error ? cause.message : 'The responses could not be uploaded. Please try again.');
+    }
+  }
+  function downloadFallbackCsv() {
+    downloadCurrent();
+    setFallbackCsvDownloaded(true);
+  }
+  async function finishWithLocalBackup() {
+    if (!fallbackCsvDownloaded || !studyType) return;
+    setFallbackCompletion(true);
+    setPendingSubmission(null);
+    setSubmissionError('');
+    setReceiptId('');
+    await showOutcomeScreen(studyType, 'completion');
+  }
+  async function uploadScreenOut(submission: StudyScreenOut) {
+    if (!authSession) { setSubmissionError('Your authenticated session is missing. Please contact the study organiser.'); return; }
+    setSubmissionError('');
+    try {
+      const result = await screenOutStudy(authSession.token, submission);
+      setReceiptId(result.receiptId);
+      setPendingScreenOut(null);
+      await showOutcomeScreen(submission.studyType as StudyType, 'screen_out');
+    } catch (cause) {
+      setSubmissionError(cause instanceof Error ? cause.message : 'The screen-out record could not be uploaded. Please try again.');
+    }
+  }
+  function advance(nextPairs: PairTrial[], nextForced: ForcedChoiceTrial[], nextScene: SceneMatchingTrial[], nextSets: SelectionTrial[]) {
+    localStorage.setItem(`material-constancy-${metadata.sessionId}`, JSON.stringify({ metadata, demographics, demographicsSkipped, studyType, pairTrainingAttempts, pairTrials: nextPairs, forcedChoiceTrials: nextForced, sceneMatchingTrials: nextScene, selectionTrials: nextSets })); setShowHelp(false); setShowCorrectAnswer(false); clearSelectionLimitNotice();
+    if (studyType && !directTesting && !previewMode) {
+      const answeredTrials = submissionTrials(studyType, nextPairs, nextForced, nextScene, nextSets).slice(0, index + 1);
+      if (sentinelErrorCount(studyType, answeredTrials) > SENTINEL_FAILURE_LIMIT) {
+        const screening: StudyScreenOut = { schemaVersion: '2026-10-20.1', sessionId: authSession?.sessionId ?? metadata.sessionId, studyType, startedAt: metadata.startedAt, screenedOutAt: new Date().toISOString(), assignmentBatch: assignedBatch, inhouse, studyRunId: authSession?.studyRunId ?? undefined, demographicsSkipped, demographics: demographicsPayload(demographics, inhouse), trainingAttempts: studyType === 'pairJudgment' ? pairTrainingAttempts : [], trials: answeredTrials, clientMetadata: collectClientMetadata() };
+        setPendingScreenOut(screening);
+        setStage('screening');
+        void uploadScreenOut(screening);
+        return;
+      }
+    }
+    if (index === activeCount - 1) {
+      if (directTesting || previewMode) {
+        if (studyType === 'selection') downloadSets(nextSets, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
+        else if (studyType === 'sceneMatching') downloadSceneMatches(nextScene, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
+        else if (studyType === 'forcedChoice') downloadForcedChoices(nextForced, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
+        else downloadPairs(nextPairs, pairTrainingAttempts, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
+        setStage('complete');
+        return;
+      }
+      if (!studyType) return;
+      const submission: StudySubmission = { schemaVersion: '2026-10-20.1', sessionId: authSession?.sessionId ?? metadata.sessionId, studyType, startedAt: metadata.startedAt, completedAt: new Date().toISOString(), assignmentBatch: assignedBatch, inhouse, studyRunId: authSession?.studyRunId ?? undefined, demographicsSkipped, demographics: demographicsPayload(demographics, inhouse), trainingAttempts: studyType === 'pairJudgment' ? pairTrainingAttempts : [], trials: submissionTrials(studyType, nextPairs, nextForced, nextScene, nextSets), clientMetadata: collectClientMetadata() };
+      setPendingSubmission(submission);
+      setStage('submitting');
+      void uploadSubmission(submission);
+    }
+    else { setIndex((value) => value + 1); trialStartedAt.current = performance.now(); }
+  }
+  function nextPair() { if (!pairComplete) return; const next = pairTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: Math.round(performance.now() - trialStartedAt.current) } : trial); setPairTrials(next); advance(next, forcedChoiceTrials, sceneMatchingTrials, selectionTrials); }
+  function nextForcedChoice() { if (!currentForcedChoice?.selectedOption) return; const next = forcedChoiceTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: Math.round(performance.now() - trialStartedAt.current) } : trial); setForcedChoiceTrials(next); advance(pairTrials, next, sceneMatchingTrials, selectionTrials); }
+  function nextSceneMatching() { if (!currentSceneMatching?.selectedOption) return; const next = sceneMatchingTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: Math.round(performance.now() - trialStartedAt.current) } : trial); setSceneMatchingTrials(next); advance(pairTrials, forcedChoiceTrials, next, selectionTrials); }
+  function nextSet() { if (!currentSelection) return; const next = selectionTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: Math.round(performance.now() - trialStartedAt.current) } : trial); setSelectionTrials(next); advance(pairTrials, forcedChoiceTrials, sceneMatchingTrials, next); }
+  function previous() { if (!index) return; setIndex((value) => value - 1); setShowHelp(false); setShowCorrectAnswer(false); clearSelectionLimitNotice(); trialStartedAt.current = performance.now(); }
 
-          <div className="attention-callout">
-            <Eye aria-hidden="true" />
-            <div>
-              <h2>Please read carefully and stay attentive</h2>
-              <p>
-                You will compare surface materials across changes in shape and
-                illumination. Base every response on your visual impression.
-              </p>
-            </div>
-          </div>
+  if (stage === 'invalid') return <main className="study-shell complete-shell"><section className="complete-card"><CircleHelp className="submission-error-icon" /><p className="eyebrow">Study access</p><h1>Open a valid study link</h1><p className="lead">Use the preview, testing, or participant link supplied by the study organiser.</p></section></main>;
 
-          <div className="study-facts">
-            <div><strong className="fact-value">≈ 25 min</strong><span className="fact-label">Estimated time</span></div>
-            <div><strong className="fact-value">{expectedTrials}</strong><span className="fact-label">Comparisons</span></div>
-            <div><Monitor aria-hidden="true" /><span className="fact-label">Desktop or laptop</span></div>
-          </div>
+  if (stage === 'login') return <ParticipantLogin studyTitle={assignedStudyType ? TEST_COPY[assignedStudyType].title : null} onLogin={login} />;
 
-          <Button
-            type="button"
-            variant="outline"
-            className="testing-toggle"
-            aria-pressed={testingMode}
-            onClick={() => setTestingMode((value) => !value)}
-          >
-            <FlaskConical aria-hidden="true" /> Testing
-            <span>{testingMode ? 'On' : 'Off'}</span>
-          </Button>
+  if (stage === 'inhouse_loading') return <main className="study-shell complete-shell"><section className="complete-card submission-card">{!submissionError ? <><LoaderCircle className="submission-spinner is-spinning" /><p className="eyebrow">In-house study</p><h1>Preparing the study</h1><p className="lead">Please wait while your study session is opened.</p></> : <><CircleHelp className="submission-error-icon" /><p className="eyebrow">In-house study</p><h1>The study could not be opened</h1><p className="lead" role="alert">{submissionError}</p><div className="complete-actions"><Button onClick={() => void enterInhouse()}>Try again</Button></div></>}</section></main>;
 
-          <div className="instructions compact-instructions">
-            <h2>Before you begin</h2>
-            <ul>
-              <li>Use a desktop or laptop in a normally lit room.</li>
-              <li>Set your screen to a comfortable, clearly visible brightness.</li>
-              <li>Do not refresh or close the page while completing the study.</li>
-              <li>Click any image to enlarge it; click again to return.</li>
-              <li>Some questions have objectively verifiable answers and help detect inattentive responding.</li>
-              <li>Feature descriptions are available from the <CircleHelp className="inline-info-icon" aria-label="Information" /> icon during pair comparisons.</li>
-            </ul>
-          </div>
+  if (stage === 'welcome') return <main className="study-shell welcome-shell"><section className="welcome-card"><div className="study-mark" aria-hidden="true"><span /><span /><span /></div><div className="tutorial-heading card-title-heading"><h1>Visual Perception Study</h1><p>{inhouse ? 'Complete material appearance study' : assignedStudyType ? `${TEST_COPY[assignedStudyType].title} test` : 'Thank you for taking part in this material appearance study.'}</p></div><div className="attention-callout"><Eye /><div><h2>Please read carefully and stay attentive</h2><p>You will judge surface materials across changes in shape and illumination.</p></div></div><div className="study-facts"><div><strong className="fact-value">{inhouse ? '≈ 30 min' : assignedStudyType === 'forcedChoice' ? '≈ 7 min' : assignedStudyType ? '≈ 8 min' : '≈ 7–8 min'}</strong><span className="fact-label">Estimated completion time</span></div><div><strong className="fact-value">{inhouse ? '4 tasks' : assignedStudyType ? '1 task' : '4 tasks'}</strong><span className="fact-label">{inhouse ? 'Completed one after another' : assignedStudyType ? TEST_COPY[assignedStudyType].title : 'Choose one after the guide'}</span></div><div><Monitor /><span className="fact-label">Desktop or laptop</span></div></div><div className="instructions compact-instructions"><h2>Before you begin</h2><ul><li>Use a desktop or laptop in a normally lit room.</li><li>Set your screen to a comfortable, clearly visible brightness.</li><li>Do not refresh or close the page while completing the study.</li></ul></div><label className="consent-row"><Checkbox checked={consented} onCheckedChange={(checked) => setConsented(checked === true)} /><span>I voluntarily agree to participate. I understand that my responses will be stored under a study identifier and used for academic research. The restricted Prolific linkage is retained only for study administration and data-quality checks.</span></label><Button className="primary-action" size="lg" disabled={!consented} onClick={() => setStage('demographics')}>Continue <ArrowRight /></Button></section></main>;
 
-          <label className="consent-row" htmlFor="study-consent">
-            <Checkbox
-              id="study-consent"
-              checked={consented}
-              onCheckedChange={(checked) => setConsented(checked === true)}
-            />
-            <span>
-              I voluntarily agree to participate. I understand that the data
-              collected will be anonymized and used as part of an academic study.
-            </span>
-          </label>
-          <Button className="primary-action" size="lg" disabled={!consented} onClick={() => setStage('demographics')}>
-            Continue <ArrowRight data-icon="inline-end" />
-          </Button>
-        </section>
-      </main>
-    );
+  if (stage === 'demographics') return <main className="study-shell demographics-shell"><section className="welcome-card demographics-card"><div className="tutorial-heading card-title-heading"><h1>Participant information</h1><p>{inhouse ? 'This in-house form collects contact and extended demographic information for internal study administration and analysis.' : 'We collect participant information to support future analyses of the user study results. Responses will be analysed and reported in aggregate, without identifying individual participants. Please do not include your name or other identifying details in free-text answers.'}</p></div><DemographicsForm values={demographics} onChange={setDemographics} inhouse={inhouse} />{demographicsSaveError && <p className="demographics-save-error" role="alert">{demographicsSaveError}</p>}<div className="demographics-actions"><Button variant="ghost" size="lg" disabled={demographicsSaving} onClick={() => setStage('welcome')}><ArrowLeft /> Back</Button><div className="demographics-forward-actions">{testingMode && <Button variant="outline" size="lg" disabled={demographicsSaving} onClick={() => void continueFromDemographics(true)}>Skip for testing</Button>}<Button size="lg" disabled={!demographicsComplete || demographicsSaving} onClick={() => void continueFromDemographics(false)}>{demographicsSaving ? <><LoaderCircle className="is-spinning" /> Saving…</> : <>Continue <ArrowRight /></>}</Button></div></div></section></main>;
+
+  if (stage === 'explanation') return <main className="study-shell explanation-shell"><header className="page-header"><div><span className="brand-dot" /> {assignedStudyType ? `${TEST_COPY[assignedStudyType].title} test` : 'Material constancy'}</div><span>Appearance guide</span></header><section className="explanation-content"><div className="tutorial-heading appearance-guide-heading"><h1>Glossiness and metallicness</h1><p>These are separate appearance attributes. Compare the low and high examples, and use the visual cues below throughout the study.</p></div>
+    <article className="attribute-card"><div className="attribute-copy"><p className="eyebrow">Attribute 1</p><h2>Glossiness</h2><p>Glossiness describes how clearly and strongly a surface reflects its surroundings. Glossy materials tend to show sharp, concentrated highlights or recognizable reflections; less glossy materials show broader, softer reflections.</p><p className="cue"><Eye /><span>Look at the <strong>sharpness and definition</strong> of highlights and reflections. Brightness alone does not mean a material is glossy.</span></p></div><TutorialExamples attribute="glossiness" /></article>
+    <article className="attribute-card"><div className="attribute-copy"><p className="eyebrow">Attribute 2</p><h2>Metallicness</h2><p>Metallicness describes how metal-like the surface response appears. Metals often have tinted reflections, strong bright–dark contrast and darker regions away from reflected lights; non-metals usually retain a more visible diffuse body color.</p><p className="cue"><Eye /><span>Look for <strong>tinted reflections and characteristic bright–dark contrast</strong>. A material can be highly glossy without being metallic, and a metal can be relatively rough.</span></p></div><TutorialExamples attribute="metallicness" /></article>
+    <div className="explanation-actions"><Button variant="ghost" size="lg" onClick={() => setStage('demographics')}><ArrowLeft /> Back</Button><Button size="lg" onClick={() => setStage(assignedStudyType ? 'instructions' : 'chooser')}>{assignedStudyType ? 'Continue to test' : 'Choose a test'} <ArrowRight /></Button></div></section></main>;
+
+  if (stage === 'chooser') return <main className="study-shell tutorial-shell"><header className="page-header"><div><span className="brand-dot" /> Material constancy</div><span>Test selection</span></header><section className="tutorial-content"><div className="tutorial-heading chooser-heading"><h1>Choose a test</h1></div><div className="test-choice-grid">
+    <button className="test-choice-card" onClick={() => choose('pairJudgment')}><span className="test-number">1</span><SlidersHorizontal /><h2>{TEST_COPY.pairJudgment.title}</h2><p>{TEST_COPY.pairJudgment.detail}</p><strong>Identity, glossiness and metallicness</strong></button>
+    <button className="test-choice-card" onClick={() => choose('forcedChoice')}><span className="test-number">2</span><ScanSearch /><h2>{TEST_COPY.forcedChoice.title}</h2><p>{TEST_COPY.forcedChoice.detail}</p><strong>One reference + two alternatives</strong></button>
+    <button className="test-choice-card" onClick={() => choose('sceneMatching')}><span className="test-number">3</span><Shuffle /><h2>{TEST_COPY.sceneMatching.title}</h2><p>{TEST_COPY.sceneMatching.detail}</p><strong>One reference + three candidates</strong></button>
+    <button className="test-choice-card" onClick={() => choose('selection')}><span className="test-number">4</span><Images /><h2>{TEST_COPY.selection.title}</h2><p>{TEST_COPY.selection.detail}</p><strong>One reference + 6 candidates</strong></button>
+  </div><div className="explanation-actions"><Button variant="ghost" size="lg" onClick={() => setStage('explanation')}><ArrowLeft /> Back</Button></div></section></main>;
+
+  if (stage === 'instructions' && studyType) return <main className="study-shell tutorial-shell"><header className="page-header"><div><span className="brand-dot" /> {TEST_COPY[studyType].title} test</div><span>{inhouse ? `Test ${inhouseTaskIndex + 1} of ${INHOUSE_STUDY_ORDER.length}` : 'Instructions'}</span></header><section className="tutorial-content task-instructions-content"><div className="tutorial-heading"><h1>{TEST_COPY[studyType].title}</h1><p>{TEST_COPY[studyType].detail}</p></div><div className="selected-test-instructions"><h2>{studyType === 'selection' ? 'Select every matching candidate' : studyType === 'sceneMatching' ? 'Track one material across two scenes' : 'Compare materials, not scenes'}</h2>{studyType === 'forcedChoice' && <p>Select the image (A or B) showing an object made of the same material as the reference image. Please note that the object shape and the illumination may be different across the images. Try to focus on the material</p>}{studyType === 'pairJudgment' && <><p>For every pair, answer all three questions:</p><ol><li>Do A and B have the same underlying material?</li><li>Which surface appears more glossy?</li><li>Which surface appears more metallic?</li></ol><p>Judge the two appearance attributes independently, even if you think the materials are probably the same. Choose “Approximately same” when neither surface appears more glossy or more metallic.</p><p>You will begin with three training examples. You must answer all three questions correctly in each example before continuing.</p></>}{studyType === 'sceneMatching' && <><p>Scene 1 contains one reference object and two contextual probes. Scene 2 contains three numbered candidates and two contextual probes made from the same respective materials as the probes in Scene 1. Find the candidate made of the same material as the reference.</p><p>You will begin with four training examples. These answers are not recorded.</p><ul><li>Only geometry or illumination changes between scenes.</li><li>The lateral probes provide additional information about that change.</li><li>Focus on material identity rather than direct pixel similarity.</li></ul></>}{studyType === 'selection' && <><p>The reference appears on the left and 6 candidates appear in a 2 × 3 grid. One or two candidates may have the same material as the reference.</p><ul><li>Select <u>up to two</u> candidates that appear to match the reference.</li><li>A highlighted border and check mark indicate selection.</li><li>Click a selected image again to deselect it.</li><li>Shape and illumination can differ substantially.</li></ul></>}</div><div className="preload-status">{preparing ? <LoaderCircle className="is-spinning" /> : prepared ? <Check /> : <CircleHelp />}<div><strong>{prepared ? 'Images ready' : preparing ? 'Preparing study images' : 'Study not ready'}</strong><span>{preparing ? 'Please wait while the images are prepared.' : prepared ? 'You can start the test.' : error}</span></div>{error && <Button variant="outline" onClick={() => void prepare(studyType)}>Try again</Button>}</div><div className="explanation-actions">{!(inhouse && inhouseTaskIndex > 0) && <Button variant="ghost" size="lg" onClick={() => setStage(assignedStudyType ? 'explanation' : 'chooser')}><ArrowLeft /> {assignedStudyType ? 'Back to guide' : 'Choose another test'}</Button>}<Button size="lg" disabled={!prepared || preparing} onClick={start}>Start test <ArrowRight /></Button></div></section></main>;
+
+  if (stage === 'submitting') return <main className="study-shell complete-shell"><section className="complete-card submission-card">{!submissionError ? <><LoaderCircle className="submission-spinner is-spinning" /><p className="eyebrow">Saving responses</p><h1>Please wait</h1><p className="lead">{inhouse && inhouseTaskIndex < INHOUSE_STUDY_ORDER.length - 1 ? `We are securely storing test ${inhouseTaskIndex + 1} before loading the next one.` : 'We are securely storing your completed study. Do not close this page.'}</p></> : <><CircleHelp className="submission-error-icon" /><p className="eyebrow">Upload not confirmed</p><h1>Your responses are still safe in this browser</h1><p className="lead" role="alert">{submissionError}</p><p className="submission-help">Please try the upload again first. If it continues to fail, download the CSV backup so your responses are not lost.</p><div className="complete-actions"><Button disabled={!pendingSubmission} onClick={() => pendingSubmission && void uploadSubmission(pendingSubmission)}>Try upload again</Button><Button variant="outline" onClick={downloadFallbackCsv}><Download /> Download results as CSV</Button></div>{finalUploadFallbackAvailable && <div className="fallback-submission-instructions"><p>Email the downloaded CSV to <a href="mailto:s.jimenez@unizar.es?subject=Prolific%20results">s.jimenez@unizar.es</a> with the subject:</p><strong>Prolific results</strong><p>After downloading the file, press Done to continue to the final thank-you screen.</p><Button disabled={!fallbackCsvDownloaded} onClick={() => void finishWithLocalBackup()}>Done</Button>{!fallbackCsvDownloaded && <small>Download the CSV before continuing.</small>}</div>}</>}</section></main>;
+
+  if (stage === 'screening') return <main className="study-shell complete-shell"><section className="complete-card submission-card">{!submissionError ? <><LoaderCircle className="submission-spinner is-spinning" /><p className="eyebrow">Saving responses</p><h1>Please wait</h1><p className="lead">We are recording your responses. Do not close this page.</p></> : <><CircleHelp className="submission-error-icon" /><p className="eyebrow">Upload not confirmed</p><h1>Your responses are still safe in this browser</h1><p className="lead" role="alert">{submissionError}</p><div className="complete-actions"><Button disabled={!pendingScreenOut} onClick={() => pendingScreenOut && void uploadScreenOut(pendingScreenOut)}>Try upload again</Button></div></>}</section></main>;
+
+  if (stage === 'screened_out') return <main className="study-shell complete-shell"><section className="complete-card"><CircleHelp className="submission-error-icon" /><p className="eyebrow">Attention test failed</p><h1>You did not pass the attention test</h1><p className="lead">Your responses did not meet the study’s attention-check requirements, so you cannot continue this test. The responses completed so far have been recorded.</p><ProlificOutcomeOptions url={outcomeUrl} code={outcomeCode} copied={outcomeCodeCopied} onCopy={() => void copyOutcomeCode()} />{redirectError && <p className="lead" role="alert">{redirectError}</p>}{receiptId && <p className="submission-receipt"><span>Screening receipt</span><strong>{receiptId}</strong></p>}</section></main>;
+
+  if (stage === 'complete' && studyType) return <main className="study-shell complete-shell"><section className="complete-card"><div className="success-icon"><Check /></div><p className="eyebrow">{inhouse ? 'Study complete' : 'Test complete'}</p><h1>Thank you for taking part</h1><p className="lead">{fallbackCompletion ? 'The automatic upload could not be confirmed, but your responses have been preserved in the CSV backup. Please email that file as instructed.' : inhouse ? 'All four tests have been completed and their responses have been stored successfully.' : directTesting ? 'Testing session complete. A local CSV has been downloaded.' : previewMode ? 'Preview session complete. A local CSV has been downloaded.' : 'Your responses have been uploaded and confirmed successfully.'}</p>{!inhouse && !directTesting && !previewMode && <ProlificOutcomeOptions url={outcomeUrl} code={outcomeCode} copied={outcomeCodeCopied} onCopy={() => void copyOutcomeCode()} />}{redirectError && <p className="lead" role="alert">{redirectError}</p>}{receiptId && !inhouse && <p className="submission-receipt"><span>Confirmation receipt</span><strong>{receiptId}</strong></p>}{activeCount > 0 && !fallbackCompletion && <div className="complete-actions"><Button variant="outline" onClick={downloadCurrent}><Download /> Download a local copy</Button></div>}</section></main>;
+
+  if (stage === 'training' && studyType === 'pairJudgment') return <PairTraining attempts={pairTrainingAttempts} onAttempt={recordPairTrainingAttempt} onBack={() => setStage('instructions')} onComplete={() => { setIndex(0); trialStartedAt.current = performance.now(); setStage('study'); }} />;
+
+  if (stage === 'training' && studyType === 'sceneMatching') {
+    const example = trainingExamples[trainingIndex];
+    if (!example) return null;
+    const compositeTraining = example.first_scene.length === 1 && example.second_scene.length === 1;
+    const selectedIsCorrect = trainingChoice === example.correct_option;
+    const trainingContext = example.shared_factor === 'illumination' ? 'Objects share their geometry while the illumination changes between scenes.' : 'Geometry differs while illumination stays the same.';
+    return <main className="study-shell constancy-study-shell scene-matching-study-shell training-study-shell">
+      <header className="trial-header"><div><span className="brand-dot" /> {TEST_COPY.sceneMatching.title} test</div><div className="trial-header-actions"><span className="training-badge">Training</span><span>Example {trainingIndex + 1} of {trainingExamples.length}</span></div></header>
+      <Progress className="study-progress" value={(trainingIndex + 1) / trainingExamples.length * 100} />
+      <section className="scene-matching-layout">
+        <div className="scene-matching-heading"><h1>Which object in Scene 2 has the same material as the reference R?</h1><p className="training-context">{trainingContext} <span className="training-note">This is training. Your answer here will not be included in the study data.</span></p></div>
+        {compositeTraining ? <div className="composite-scenes-card">
+          <div className="scene-strip scene-strip-composite"><div className="scene-strip-label"><strong>Scene 1</strong><span>Reference</span></div><CompositeSceneFigure image={example.first_scene[0]} labels={['R']} onZoom={() => setLightboxPath(example.first_scene[0].image_path)} /></div>
+          <div className="scene-strip scene-strip-composite"><div className="scene-strip-label"><strong>Scene 2</strong><span>Choose one</span></div><CompositeSceneFigure image={example.second_scene[0]} labels={['1', '2', '3']} selectedOption={trainingChoice} correctOption={example.correct_option} showCorrectAnswer={trainingRevealed} onSelect={(option) => { if (!trainingRevealed) { setTrainingChoice(option); setTrainingIncorrect(false); } }} onZoom={() => setLightboxPath(example.second_scene[0].image_path)} /></div>
+        </div> : <>
+          <div className="scene-strip"><div className="scene-strip-label"><strong>Scene 1</strong><span>Reference objects</span></div>{example.first_scene.map((image, imageIndex) => <figure key={image.image_id} className={'scene-sample ' + ('ABCD'[imageIndex] === example.target_label ? 'is-target' : '')}><button onClick={() => setLightboxPath(image.image_path)}><img src={studyImageUrl(selectionDisplayPath(image))} alt={`Object ${'ABCD'[imageIndex]}`} /></button><figcaption>{'ABCD'[imageIndex]}</figcaption></figure>)}</div>
+          <div className="scene-strip"><div className="scene-strip-label"><strong>Scene 2</strong><span>Choose one</span></div>{example.second_scene.map((image, imageIndex) => { const option = (imageIndex + 1) as 1 | 2 | 3 | 4; return <button key={image.image_id} className="scene-sample scene-option" data-selected={trainingChoice === option || undefined} data-correct={trainingRevealed && example.correct_option === option || undefined} aria-pressed={trainingChoice === option} disabled={trainingRevealed} onClick={() => { setTrainingChoice(option); setTrainingIncorrect(false); }}><img src={studyImageUrl(selectionDisplayPath(image))} alt={`Option ${option}`} /><span>{option}</span>{trainingChoice === option && <span className="candidate-check"><Check /></span>}</button>; })}</div>
+        </>}
+      </section>
+      <footer className="constancy-actions training-constancy-actions"><Button variant="ghost" onClick={() => { if (trainingIndex === 0) setStage('instructions'); else { setTrainingIndex((value) => value - 1); setTrainingChoice(null); setTrainingRevealed(false); setTrainingIncorrect(false); } }}><ArrowLeft /> Back</Button><div className="training-footer-feedback" aria-live="polite">{trainingRevealed && <div className="training-feedback" role="status"><strong>Correct!</strong> The reference and option {example.correct_option} show the same material, even though {example.shared_factor === 'illumination' ? 'the lighting has changed.' : 'the shape has changed.'}</div>}{trainingIncorrect && <div className="training-feedback training-feedback-error" role="alert">Incorrect. Please reread the instructions and select your answer again.</div>}</div>{trainingRevealed ? <Button onClick={advanceTraining}>{trainingIndex + 1 === trainingExamples.length ? 'Begin test' : 'Next example'} <ArrowRight /></Button> : <Button disabled={trainingChoice === null} onClick={() => { if (selectedIsCorrect) setTrainingRevealed(true); else setTrainingIncorrect(true); }}>Check answer <ArrowRight /></Button>}</footer>
+      {lightboxPath && <button className={`image-lightbox${compositeTraining && lightboxPath === example.second_scene[0]?.image_path ? ' image-lightbox-wide' : ''}`} onClick={() => setLightboxPath('')}><img src={studyImageUrl(lightboxPath)} alt="Enlarged material" /><span>Click to close</span></button>}
+    </main>;
+  }
+  if (stage !== 'study' || !studyType || !activeCount) return null;
+  const progress = (index + 1) / activeCount * 100;
+  if (studyType === 'forcedChoice' && currentForcedChoice) return <main className="study-shell constancy-study-shell"><header className="trial-header"><div><span className="brand-dot" /> {TEST_COPY.forcedChoice.title} test</div><div className="trial-header-actions"><span>Trial {index + 1} of {activeCount}</span><TestingAnswerButton visible={directTesting} ready={Boolean(testingGroundTruth)} shown={showCorrectAnswer} onToggle={() => setShowCorrectAnswer((value) => !value)} /></div></header><Progress className="study-progress" value={progress} /><section className="reference-trial-layout"><div className="reference-heading"><h1>Which image shows the same material as the reference?</h1><p>Select the image (A or B) showing an object made of the same material as the reference image. Please note that the object shape and the illumination may be different across the images. Try to focus on the material</p></div><div className="reference-workspace"><figure className="reference-sample"><button onClick={() => setLightboxPath(currentForcedChoice.reference.image_path)}><img src={stimulusUrl(currentForcedChoice.reference.image_path)} alt="Reference material" /></button><figcaption>Reference</figcaption></figure><div className="candidate-grid forced-choice-grid">{currentForcedChoice.options.map((option, optionIndex) => { const label = optionIndex === 0 ? 'A' : 'B'; const selected = currentForcedChoice.selectedOption === label; return <button key={option.image_id} className="candidate-card forced-choice-card" data-selected={selected || undefined} data-correct={showCorrectAnswer && correctForcedChoice === label || undefined} aria-pressed={selected} onClick={() => setForcedChoiceTrials((all) => all.map((trial, i) => i === index ? { ...trial, selectedOption: label } : trial))}><img src={stimulusUrl(option.image_path)} alt={`Option ${label}`} /><span>{label}</span>{selected && <span className="candidate-check"><Check /></span>}</button>; })}</div></div></section><footer className="constancy-actions"><Button variant="ghost" disabled={!index} onClick={previous}><ArrowLeft /> Back</Button><Button disabled={!currentForcedChoice.selectedOption} onClick={nextForcedChoice}>{index === activeCount - 1 ? 'Finish test' : 'Next trial'} <ArrowRight /></Button></footer>{lightboxPath && <button className="image-lightbox" onClick={() => setLightboxPath('')}><img src={stimulusUrl(lightboxPath)} alt="Enlarged reference" /><span>Click to close</span></button>}</main>;
+
+  if (studyType === 'sceneMatching' && currentSceneMatching) {
+    const compositeScene = currentSceneMatching.first_scene.length === 1 && currentSceneMatching.second_scene.length === 1;
+    return <main className="study-shell constancy-study-shell scene-matching-study-shell"><header className="trial-header"><div><span className="brand-dot" /> {TEST_COPY.sceneMatching.title} test</div><div className="trial-header-actions"><span>Trial {index + 1} of {activeCount}</span><TestingAnswerButton visible={directTesting} ready={Boolean(testingGroundTruth)} shown={showCorrectAnswer} onToggle={() => setShowCorrectAnswer((value) => !value)} /></div></header><Progress className="study-progress" value={progress} /><section className="scene-matching-layout"><div className="scene-matching-heading"><h1>Which object in Scene 2 has the same material as the reference R?</h1><p>Select which object from Scene 2 (1, 2, or 3) is made from the same material as R in Scene 1.</p></div>{compositeScene ? <div className="composite-scenes-card">
+      <div className="scene-strip scene-strip-composite"><div className="scene-strip-label"><strong>Scene 1</strong><span>Reference</span></div><CompositeSceneFigure image={currentSceneMatching.first_scene[0]} labels={['R']} onZoom={() => setLightboxPath(currentSceneMatching.first_scene[0].image_path)} /></div>
+      <div className="scene-strip scene-strip-composite"><div className="scene-strip-label"><strong>Scene 2</strong><span>Choose one</span></div><CompositeSceneFigure image={currentSceneMatching.second_scene[0]} labels={['1', '2', '3']} selectedOption={currentSceneMatching.selectedOption} correctOption={correctSceneMatch} showCorrectAnswer={showCorrectAnswer} onSelect={(option) => setSceneMatchingTrials((all) => all.map((trial, i) => i === index ? { ...trial, selectedOption: option } : trial))} onZoom={() => setLightboxPath(currentSceneMatching.second_scene[0].image_path)} /></div>
+    </div> : <>
+      <div className="scene-strip"><div className="scene-strip-label"><strong>Scene 1</strong><span>Reference objects</span></div>{currentSceneMatching.first_scene.map((image, imageIndex) => <figure key={image.image_id} className={"scene-sample " + (`${'ABCD'[imageIndex]}` === currentSceneMatching.target_label ? 'is-target' : '')}><button onClick={() => setLightboxPath(image.image_path)}><img src={studyImageUrl(selectionDisplayPath(image))} alt={`Object ${'ABCD'[imageIndex]}`} /></button><figcaption>{'ABCD'[imageIndex]}</figcaption></figure>)}</div>
+      <div className="scene-strip"><div className="scene-strip-label"><strong>Scene 2</strong><span>Choose one</span></div>{currentSceneMatching.second_scene.map((image, imageIndex) => { const option = (imageIndex + 1) as 1 | 2 | 3 | 4; const selected = currentSceneMatching.selectedOption === option; return <button key={image.image_id} className="scene-sample scene-option" data-selected={selected || undefined} data-correct={showCorrectAnswer && correctSceneMatch === option || undefined} aria-pressed={selected} onClick={() => setSceneMatchingTrials((all) => all.map((trial, i) => i === index ? { ...trial, selectedOption: option } : trial))}><img src={studyImageUrl(selectionDisplayPath(image))} alt={`Option ${option}`} /><span>{option}</span>{selected && <span className="candidate-check"><Check /></span>}</button>; })}</div>
+    </>}</section><footer className="constancy-actions"><Button variant="ghost" disabled={!index} onClick={previous}><ArrowLeft /> Back</Button><Button disabled={!currentSceneMatching.selectedOption} onClick={nextSceneMatching}>{index === activeCount - 1 ? 'Finish test' : 'Next trial'} <ArrowRight /></Button></footer>{lightboxPath && <button className={`image-lightbox${compositeScene && lightboxPath === currentSceneMatching.second_scene[0]?.image_path ? ' image-lightbox-wide' : ''}`} onClick={() => setLightboxPath('')}><img src={studyImageUrl(lightboxPath)} alt="Enlarged material" /><span>Click to close</span></button>}</main>;
   }
 
-  if (stage === 'demographics') {
-    return (
-      <main className="study-shell demographics-shell">
-        <section className="welcome-card demographics-card" aria-labelledby="demographics-title">
-          <p className="eyebrow">About you</p>
-          <h1 id="demographics-title">Demographic information</h1>
-          <p className="lead">These responses are stored without your name and used only for academic analysis.</p>
-          <div className="demographics-form">
-            <DemographicChoice
-              legend="Gender"
-              value={demographics.gender}
-              options={[
-                { value: 'male', label: 'Male' },
-                { value: 'female', label: 'Female' },
-                { value: 'other', label: 'Other (specify)' },
-                { value: 'prefer_not_to_answer', label: 'Prefer not to answer' },
-              ]}
-              onChange={(gender) => setDemographics((current) => ({ ...current, gender }))}
-            />
-            {demographics.gender === 'other' ? (
-              <label className="demographic-text-field">
-                <span>Please specify</span>
-                <input
-                  value={demographics.genderOther}
-                  maxLength={80}
-                  onChange={(event) => setDemographics((current) => ({ ...current, genderOther: event.target.value }))}
-                />
-              </label>
-            ) : null}
-            <label className="demographic-text-field age-field">
-              <span>Age</span>
-              <input
-                type="number"
-                min="18"
-                max="100"
-                value={demographics.age}
-                onChange={(event) => setDemographics((current) => ({ ...current, age: event.target.value }))}
-              />
-              <small>Enter an age between 18 and 100.</small>
-            </label>
-            <DemographicChoice
-              legend="Knowledge of computer graphics"
-              value={demographics.computerGraphicsKnowledge}
-              options={EXPERIENCE_OPTIONS}
-              onChange={(value) => setDemographics((current) => ({ ...current, computerGraphicsKnowledge: value }))}
-            />
-            <DemographicChoice
-              legend="Experience with design or 3D modeling software"
-              value={demographics.designModelingExperience}
-              options={EXPERIENCE_OPTIONS}
-              onChange={(value) => setDemographics((current) => ({ ...current, designModelingExperience: value }))}
-            />
-            <DemographicChoice
-              legend="Artistic experience or knowledge"
-              value={demographics.artisticExperience}
-              options={EXPERIENCE_OPTIONS}
-              onChange={(value) => setDemographics((current) => ({ ...current, artisticExperience: value }))}
-            />
-          </div>
-          <div className="demographics-actions">
-            <Button variant="ghost" size="lg" onClick={() => setStage('welcome')}><ArrowLeft /> Back</Button>
-            <Button size="lg" disabled={!demographicsComplete} onClick={openTutorial}>
-              Continue to instructions <ArrowRight />
-            </Button>
-          </div>
-        </section>
-      </main>
-    );
-  }
+  if (studyType === 'selection' && currentSelection) return <main className="study-shell constancy-study-shell selection-study-shell"><header className="trial-header"><div><span className="brand-dot" /> {TEST_COPY.selection.title} test</div><div className="trial-header-actions"><span>Trial {index + 1} of {activeCount}</span><TestingAnswerButton visible={directTesting} ready={Boolean(testingGroundTruth)} shown={showCorrectAnswer} onToggle={() => setShowCorrectAnswer((value) => !value)} /></div></header><Progress className="study-progress" value={progress} /><section className="selection-trial-layout"><div className="selection-heading"><h1>Which candidates have the same material as the reference?</h1><p>Select all that apply. <u>You can select up to two.</u> Click a selected candidate again to deselect it.</p></div><div className="selection-workspace"><aside className="selection-reference-column"><h2>Reference</h2><figure className="selection-reference"><button onClick={() => setLightboxPath(currentSelection.reference.image_path)} aria-label="Enlarge reference image"><img src={studyImageUrl(selectionDisplayPath(currentSelection.reference))} alt="Reference material" /></button><figcaption><ZoomIn /> Click to enlarge</figcaption></figure><div className="selection-counter"><strong>{currentSelection.selectedCandidateIds.length}</strong><span>selected</span></div></aside><div className="selection-candidate-grid" role="group" aria-label="Candidate material images">{currentSelection.candidates.map((candidate, candidateIndex) => { const selected = currentSelection.selectedCandidateIds.includes(candidate.candidate_id); return <button key={candidate.candidate_id} className="selection-candidate" data-selected={selected || undefined} data-correct={showCorrectAnswer && correctSelectionIds.has(candidate.candidate_id) || undefined} aria-pressed={selected} aria-label={`Candidate ${candidateIndex + 1}${selected ? ', selected' : ''}`} onClick={() => toggleCandidate(candidate.candidate_id)}><img src={studyImageUrl(selectionDisplayPath(candidate))} alt={`Candidate ${candidateIndex + 1}`} />{selected && <span className="candidate-check"><Check /></span>}</button>; })}</div></div></section><footer className="constancy-actions"><Button variant="ghost" disabled={!index} onClick={previous}><ArrowLeft /> Back</Button><Button onClick={nextSet}>{index === activeCount - 1 ? 'Finish test' : `Confirm ${currentSelection.selectedCandidateIds.length} selection${currentSelection.selectedCandidateIds.length === 1 ? '' : 's'}`} <ArrowRight /></Button></footer>{selectionLimitNotice && <div className="selection-limit-toast" role="status" aria-live="polite"><CircleHelp /><span>You have already selected the maximum of 2 images.</span></div>}{lightboxPath && <button className="image-lightbox" onClick={() => setLightboxPath('')}><img src={studyImageUrl(lightboxPath)} alt="Enlarged reference" /><span>Click to close</span></button>}</main>;
 
-  if (stage === 'tutorial') {
-    return (
-      <main className="study-shell tutorial-shell">
-        <header className="page-header"><div><span className="brand-dot" /> Material constancy</div><span>Instructions</span></header>
-        <section className="tutorial-content">
-          <div className="tutorial-heading">
-            <p className="eyebrow">What you will judge</p>
-            <h1>Compare materials, not scenes</h1>
-            <p>Shape and illumination may change. Focus on the surface material covering each object.</p>
-          </div>
-          <div className="task-guide-grid">
-            <article className="task-guide-card">
-              <span>1</span><h2>Material identity</h2>
-              <p>Judge how likely it is that objects A and B have exactly the same underlying surface material.</p>
-              <strong>Definitely same → Definitely different</strong>
-            </article>
-            <article className="task-guide-card">
-              <span>2</span><h2>Relative appearance</h2>
-              <p>Compare their visible glossiness and metallicness, even if you think the underlying material is the same.</p>
-              <strong>A → Approximately same → B</strong>
-            </article>
-            <article className="task-guide-card">
-              <span>3</span><h2>Reference selection</h2>
-              <p>Select which of four candidates has the same underlying material as the reference. All candidates share one scene condition.</p>
-              <strong>One candidate is physically correct</strong>
-            </article>
-          </div>
-          <div className="feature-definitions">
-            <div><strong>Glossiness</strong><p>Look for specular highlights and recognizable or blurred reflections. Do not equate glossiness with overall brightness.</p></div>
-            <div><strong>Metallicness</strong><p>Look for strong bright–dark contrast and reflections tinted by the surface colour. A surface can be glossy without being metallic.</p></div>
-          </div>
-          <div className="preload-status">
-            {preparing ? <LoaderCircle className="is-spinning" /> : prepared ? <Check /> : <CircleHelp />}
-            <div>
-              <strong>{prepared ? 'Images ready' : preparing ? 'Preparing study images' : 'Study not ready'}</strong>
-              <span>{preparing ? `${preloaded} of ${preloadTotal || '…'} unique images loaded` : prepared ? `${expectedTrials} trials prepared` : error}</span>
-            </div>
-            {error ? <Button variant="outline" onClick={() => void prepareStudy()}>Try again</Button> : null}
-          </div>
-          <div className="explanation-actions">
-            <Button variant="ghost" size="lg" onClick={() => setStage('demographics')}><ArrowLeft /> Back</Button>
-            <Button size="lg" disabled={!prepared || preparing} onClick={startStudy}>Start study <ArrowRight /></Button>
-          </div>
-        </section>
-      </main>
-    );
-  }
-
-  if (stage === 'complete') {
-    return (
-      <main className="study-shell complete-shell">
-        <section className="complete-card">
-          <div className="success-icon"><Check /></div>
-          <p className="eyebrow">Study complete</p>
-          <h1>Thank you for taking part</h1>
-          <p className="lead">Your responses have been recorded.</p>
-          {testingMode ? (
-            <div className="complete-actions">
-              <Button onClick={() => downloadTestingData(trials, demographics, metadata)}><Download /> Download test data</Button>
-            </div>
-          ) : null}
-        </section>
-      </main>
-    );
-  }
-
-  if (!current) return null;
-  const progress = ((index + 1) / trials.length) * 100;
-
-  return (
-    <main className="study-shell constancy-study-shell">
-      <header className="trial-header">
-        <div><span className="brand-dot" /> Material constancy</div>
-        <span>Trial {index + 1} of {trials.length}</span>
-      </header>
-      <Progress className="study-progress" value={progress} />
-
-      {current.type === 'pair' ? (
-        <section className="pair-trial-layout">
-          <div className="pair-images-panel">
-            {[
-              { label: 'A', path: current.displayPathA },
-              { label: 'B', path: current.displayPathB },
-            ].map((image) => (
-              <figure key={image.label}>
-                <button type="button" onClick={() => setLightboxPath(image.path)} aria-label={`Enlarge image ${image.label}`}>
-                  <img src={stimulusUrl(image.path)} alt={`Material ${image.label}`} />
-                </button>
-                <figcaption>{image.label}</figcaption>
-              </figure>
-            ))}
-            <p className="zoom-reminder"><ZoomIn /> Click either image to enlarge it.</p>
-          </div>
-          <div className="pair-response-panel">
-            <div className="ratings-title-row">
-              <div><p className="eyebrow">Pair comparison</p><h1>Compare A and B</h1></div>
-              <button className="attribute-help-button" aria-expanded={showHelp} onClick={() => setShowHelp((value) => !value)}><CircleHelp /></button>
-            </div>
-            {showHelp ? (
-              <div className="inline-help-window">
-                <p><strong>Underlying material:</strong> the physical surface reflectance, independent of object shape or lighting.</p>
-                <p><strong>Glossiness:</strong> strength and clarity of specular reflections.</p>
-                <p><strong>Metallicness:</strong> metal-like reflection structure, colour tinting and bright–dark contrast.</p>
-              </div>
-            ) : null}
-            <fieldset className="pair-question identity-question">
-              <legend>How likely is it that these objects have exactly the same underlying surface material?</legend>
-              <RadioGroup
-                value={current.sameMaterialLikelihood?.toString() ?? ''}
-                onValueChange={(value) => updateCurrent({ sameMaterialLikelihood: Number(value) })}
-                className="identity-scale"
-              >
-                {IDENTITY_OPTIONS.map((option) => (
-                  <label className="scale-choice" key={option.value}>
-                    <RadioGroupItem value={option.value.toString()} />
-                    <span>{option.label}</span>
-                  </label>
-                ))}
-              </RadioGroup>
-            </fieldset>
-            <RelativeQuestion attribute="glossier" value={current.glossChoice} onChange={(glossChoice) => updateCurrent({ glossChoice })} />
-            <RelativeQuestion attribute="more metallic" value={current.metalChoice} onChange={(metalChoice) => updateCurrent({ metalChoice })} />
-          </div>
-        </section>
-      ) : (
-        <section className="reference-trial-layout">
-          <div className="reference-heading">
-            <p className="eyebrow">Reference selection</p>
-            <h1>Which candidate has the same underlying material?</h1>
-            <p>Ignore differences caused by shape and illumination.</p>
-          </div>
-          <div className="reference-workspace">
-            <figure className="reference-sample">
-              <button type="button" onClick={() => setLightboxPath(current.referencePath)}>
-                <img src={stimulusUrl(current.referencePath)} alt="Reference material" />
-              </button>
-              <figcaption>Reference</figcaption>
-            </figure>
-            <div className="candidate-grid" role="radiogroup" aria-label="Candidate materials">
-              {current.candidateOrder.map((path, candidateIndex) => (
-                <label className="candidate-card" key={path} data-selected={current.selectedCandidatePath === path || undefined}>
-                  <input
-                    type="radio"
-                    name="reference-candidate"
-                    value={path}
-                    checked={current.selectedCandidatePath === path}
-                    onChange={() => updateCurrent({ selectedCandidatePath: path })}
-                  />
-                  <button type="button" tabIndex={-1} onClick={(event) => { event.preventDefault(); setLightboxPath(path); }}>
-                    <img src={stimulusUrl(path)} alt={`Candidate ${candidateIndex + 1}`} />
-                  </button>
-                  <span>Candidate {candidateIndex + 1}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
-
-      <footer className="constancy-actions">
-        <Button
-          variant="ghost"
-          disabled={index === 0 || submitting}
-          onClick={() => {
-            setIndex((value) => value - 1);
-            setShowHelp(false);
-            trialStartedAt.current = performance.now();
-          }}
-        >
-          <ArrowLeft /> Back
-        </Button>
-        <div>
-          {error ? <p className="form-error">{error}</p> : null}
-          <Button disabled={!currentComplete || submitting} onClick={continueStudy}>
-            {submitting ? 'Saving…' : index === trials.length - 1 ? 'Submit responses' : 'Next trial'} <ArrowRight />
-          </Button>
-        </div>
-      </footer>
-
-      {lightboxPath ? (
-        <button className="image-lightbox" onClick={() => setLightboxPath('')} aria-label="Close enlarged image">
-          <img src={stimulusUrl(lightboxPath)} alt="Enlarged material" />
-          <span>Click to close</span>
-        </button>
-      ) : null}
-    </main>
-  );
+  if (!currentPair) return null;
+  return <main className="study-shell constancy-study-shell"><header className="trial-header"><div><span className="brand-dot" /> {TEST_COPY.pairJudgment.title} test</div><div className="trial-header-actions"><span>Trial {index + 1} of {activeCount}</span><TestingAnswerButton visible={directTesting} ready={Boolean(testingGroundTruth)} shown={showCorrectAnswer} onToggle={() => setShowCorrectAnswer((value) => !value)} /></div></header><Progress className="study-progress" value={progress} /><section className="pair-trial-layout"><div className="pair-images-panel">{[{ label: 'A', path: currentPair.displayPathA }, { label: 'B', path: currentPair.displayPathB }].map((image) => <figure key={image.label}><button onClick={() => setLightboxPath(image.path)}><img src={stimulusUrl(image.path)} alt={`Material ${image.label}`} /></button><figcaption>{image.label}</figcaption></figure>)}<p className="zoom-reminder"><ZoomIn /> Click either image to enlarge it.</p></div><div className="pair-response-panel"><div className="ratings-title-row"><div><h1>Compare A and B</h1></div><button className="attribute-help-button" aria-expanded={showHelp} onClick={() => setShowHelp((v) => !v)}><CircleHelp /></button></div>{showHelp && <div className="inline-help-window"><p><strong>Underlying material:</strong> physical surface reflectance, independent of object shape or lighting. Note that two different materials can share a similar color or chromatic pattern while differing in glossiness or metallic appearance.</p><p><strong>Glossiness:</strong> strength and clarity of specular reflections.</p><p><strong>Metallicness:</strong> metal-like reflection structure, color tinting and bright–dark contrast.</p></div>}<fieldset className="pair-question identity-question"><legend>Do these objects have the same underlying material?</legend><RadioGroup value={currentPair.sameMaterialLikelihood?.toString() ?? ''} onValueChange={(value) => updatePair({ sameMaterialLikelihood: Number(value) })} className="identity-scale compact-identity-scale">{IDENTITY_OPTIONS.map((option) => <label className="scale-choice" data-correct={showCorrectAnswer && correctPairAnswer === option.value || undefined} key={option.value}><RadioGroupItem value={String(option.value)} /><span>{option.label}</span></label>)}</RadioGroup></fieldset><div className="pair-attributes"><RelativeQuestion attribute="more glossy" value={currentPair.glossChoice} onChange={(glossChoice) => updatePair({ glossChoice })} /><RelativeQuestion attribute="more metallic" value={currentPair.metalChoice} onChange={(metalChoice) => updatePair({ metalChoice })} /></div></div></section><footer className="constancy-actions"><Button variant="ghost" disabled={!index} onClick={previous}><ArrowLeft /> Back</Button><Button disabled={!pairComplete} onClick={nextPair}>{index === activeCount - 1 ? 'Finish test' : 'Next trial'} <ArrowRight /></Button></footer>{lightboxPath && <button className="image-lightbox" onClick={() => setLightboxPath('')}><img src={stimulusUrl(lightboxPath)} alt="Enlarged material" /><span>Click to close</span></button>}</main>;
 }

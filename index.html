@@ -7,12 +7,21 @@
       name="description"
       content="A visual perception study of glossiness and metallicness."
     />
-    <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
+    <script>
+      // Keep assets rooted at the study when a direct test URL has a trailing slash.
+      const routeParts = location.pathname.replace(/\/+$/, '').split('/');
+      const route = routeParts[routeParts.length - 1];
+      if (['preview', 'testing', 'inhouse', 'test1_pair_comparison', 'test2_2afc', 'test3_matching', 'test4_mm'].includes(route)) {
+        const base = document.createElement('base');
+        base.href = new URL(location.pathname.endsWith('/') ? '../' : './', location.href).href;
+        document.head.appendChild(base);
+      }
+    </script>
     <title>User study</title>
   </head>
   <body>
     <div id="root"></div>
-    <script src="%BASE_URL%config.js"></script>
+    <script src="%BASE_URL%config.js?v=20261019-r3"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

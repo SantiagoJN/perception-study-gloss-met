@@ -1,5 +1,8 @@
 node_modules/
 dist/
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
 .env
 .env.*
 !.env.example
@@ -11,3 +14,11 @@ supabase_seeds/*.csv
 cloudflare_upload_manifest.csv
 cloudflare_upload_failures.csv
 .r2_staging/
+
+# Private filename reversals used only to prepare and locally serve opaque R2
+# stimuli. Public manifests contain only the final SHA-256 object names.
+private/
+stimulus_generation/
+public/stimuli_tests/
+public/test4_setups/
+cloudflare-worker/backups/

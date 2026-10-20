@@ -1,0 +1,130 @@
+{
+  "schema_version": 3,
+  "dataset": "datasetv9_groups4_instruction_pairs_current_test3",
+  "examples": [
+    {
+      "trial_id": "V9_TRAIN_0001",
+      "training_id": "V9_TRAIN_0001",
+      "shared_factor": "geometry",
+      "target_label": "R",
+      "first_scene": [
+        {
+          "image_id": "v9_train_0001_A",
+          "image_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_geometry][A][canary_wharf][sphere].png",
+          "thumbnail_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_geometry][A][canary_wharf][sphere].png",
+          "group_id": "G07"
+        }
+      ],
+      "second_scene": [
+        {
+          "image_id": "v9_train_0001_B",
+          "image_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_geometry][B][canary_wharf][ridges_2].png",
+          "thumbnail_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_geometry][B][canary_wharf][ridges_2].png",
+          "group_id": "G07"
+        }
+      ],
+      "correct_option": 3,
+      "slot_materials_scene_1": [
+        "G07:20"
+      ],
+      "slot_materials_scene_2": [
+        "G13:22",
+        "G10:12",
+        "G07:20"
+      ]
+    },
+    {
+      "trial_id": "V9_TRAIN_0002",
+      "training_id": "V9_TRAIN_0002",
+      "shared_factor": "illumination",
+      "target_label": "R",
+      "first_scene": [
+        {
+          "image_id": "v9_train_0002_A",
+          "image_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_illumination][A][canary_wharf][blob].png",
+          "thumbnail_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_illumination][A][canary_wharf][blob].png",
+          "group_id": "G10"
+        }
+      ],
+      "second_scene": [
+        {
+          "image_id": "v9_train_0002_B",
+          "image_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_illumination][B][forest_cave][blob].png",
+          "thumbnail_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_illumination][B][forest_cave][blob].png",
+          "group_id": "G10"
+        }
+      ],
+      "correct_option": 3,
+      "slot_materials_scene_1": [
+        "G10:12"
+      ],
+      "slot_materials_scene_2": [
+        "G07:20",
+        "G13:22",
+        "G10:12"
+      ]
+    },
+    {
+      "trial_id": "V9_TRAIN_0003",
+      "training_id": "V9_TRAIN_0003",
+      "shared_factor": "geometry",
+      "target_label": "R",
+      "first_scene": [
+        {
+          "image_id": "v9_train_0003_A",
+          "image_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_geometry_edit][A][canary_wharf][blob].png",
+          "thumbnail_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_geometry_edit][A][canary_wharf][blob].png",
+          "group_id": "G01"
+        }
+      ],
+      "second_scene": [
+        {
+          "image_id": "v9_train_0003_B",
+          "image_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_geometry_edit][B][canary_wharf][bumpiness_0].png",
+          "thumbnail_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_geometry_edit][B][canary_wharf][bumpiness_0].png",
+          "group_id": "G01"
+        }
+      ],
+      "correct_option": 2,
+      "slot_materials_scene_1": [
+        "G01:20"
+      ],
+      "slot_materials_scene_2": [
+        "G01:02",
+        "G01:20",
+        "G01:22"
+      ]
+    },
+    {
+      "trial_id": "V9_TRAIN_0004",
+      "training_id": "V9_TRAIN_0004",
+      "shared_factor": "illumination",
+      "target_label": "R",
+      "first_scene": [
+        {
+          "image_id": "v9_train_0004_A",
+          "image_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_illumination_edit][A][forest_cave][ridges_1].png",
+          "thumbnail_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_illumination_edit][A][forest_cave][ridges_1].png",
+          "group_id": "G02"
+        }
+      ],
+      "second_scene": [
+        {
+          "image_id": "v9_train_0004_B",
+          "image_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_illumination_edit][B][machine_shop][ridges_1].png",
+          "thumbnail_path": "datasetv9/groups4/examples_v9/instruction_pairs/[pair_illumination_edit][B][machine_shop][ridges_1].png",
+          "group_id": "G02"
+        }
+      ],
+      "correct_option": 1,
+      "slot_materials_scene_1": [
+        "G02:02"
+      ],
+      "slot_materials_scene_2": [
+        "G02:02",
+        "G02:20",
+        "G02:00"
+      ]
+    }
+  ]
+}

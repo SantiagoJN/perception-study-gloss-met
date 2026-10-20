@@ -29,9 +29,12 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
-          STIMULUS_BASE_URL: ${{ secrets.STIMULUS_BASE_URL }}
+          STIMULUS_BASE_URL: https://pub-6d66a3bbf6794bbf8d73daa755e5683c.r2.dev
+          STUDY_API_BASE_URL: https://perception-study-api.bunnysantiago.workers.dev
         run: |
-          node --input-type=module -e "import fs from 'node:fs'; const config = { supabaseUrl: process.env.SUPABASE_URL ?? '', supabasePublishableKey: process.env.SUPABASE_PUBLISHABLE_KEY ?? '', stimulusBaseUrl: process.env.STIMULUS_BASE_URL ?? '' }; fs.writeFileSync('dist/config.js', 'window.USER_STUDY_CONFIG = ' + JSON.stringify(config) + ';\\n');"
+          test -n "$STIMULUS_BASE_URL" || { echo "STIMULUS_BASE_URL is required for anonymous R2 stimuli" >&2; exit 1; }
+          test -n "$STUDY_API_BASE_URL" || { echo "STUDY_API_BASE_URL is required for response submission" >&2; exit 1; }
+          node --input-type=module -e "import fs from 'node:fs'; const config = { supabaseUrl: process.env.SUPABASE_URL ?? '', supabasePublishableKey: process.env.SUPABASE_PUBLISHABLE_KEY ?? '', stimulusBaseUrl: process.env.STIMULUS_BASE_URL ?? '', apiBaseUrl: process.env.STUDY_API_BASE_URL ?? '' }; fs.writeFileSync('dist/config.js', 'window.USER_STUDY_CONFIG = ' + JSON.stringify(config) + ';\\n');"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:

@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/write_route_pages.mjs",
     "preview": "vite preview",
-    "lint": "oxlint src"
+    "lint": "oxlint src",
+    "test:e2e": "python3 tests/e2e_study.py",
+    "prepare:cloudflare-manifests": "python3 scripts/anonymize_cloudflare_manifests.py"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
