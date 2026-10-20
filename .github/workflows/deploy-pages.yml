@@ -30,7 +30,7 @@ jobs:
       - run: python -m pip install pillow websocket-client
       - run: npm run lint
       - run: npm run test:worker
-      - run: npm run test:assets
+      - run: npm run test:assets:ci
       - run: npm run build
       - run: npm run test:e2e
       - run: npm run test:e2e:routes

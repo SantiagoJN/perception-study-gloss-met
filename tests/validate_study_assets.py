@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 from collections import Counter
@@ -50,6 +51,14 @@ def render_fields(path: str) -> tuple[str, str, str, str]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--skip-local-assets",
+        action="store_true",
+        help="Validate committed manifests without requiring the external dataset checkout.",
+    )
+    args = parser.parse_args()
+
     pairs = load("study_pairs.json")
     forced = load("forced_choice_trials.json")["trials"]
     scenes = load("scene_matching_trials.json")["trials"]
@@ -116,25 +125,26 @@ def main() -> None:
         assert len(item["first_scene"]) == len(item["second_scene"]) == 1
         assert item["correct_option"] in (1, 2, 3)
 
-    source_scenes = json.loads((SOURCE / "test3.json").read_text(encoding="utf-8"))["setups"]
-    assert [item["setup_id"] for item in source_scenes] == [item["trial_id"] for item in scenes]
-    for item in source_scenes:
-        reference = item["reference"]
-        options = item["options"]
-        assert len(options) == 3
-        assert all(option["group_id"] == reference["group_id"] for option in options)
-        assert all(option["image_id"] != reference["image_id"] for option in options)
-        matches = [index + 1 for index, option in enumerate(options) if option["material_id"] == reference["material_id"]]
-        assert matches == [item["correct_option"]]
-        if item["change_type"] == "illumination":
-            assert all(option["geometry_id"] == reference["geometry_id"] for option in options)
-            assert len({option["illumination_id"] for option in options}) == 1
-            assert options[0]["illumination_id"] != reference["illumination_id"]
-        else:
-            assert item["change_type"] == "geometry"
-            assert all(option["illumination_id"] == reference["illumination_id"] for option in options)
-            assert len({option["geometry_id"] for option in options}) == 1
-            assert options[0]["geometry_id"] != reference["geometry_id"]
+    if not args.skip_local_assets:
+        source_scenes = json.loads((SOURCE / "test3.json").read_text(encoding="utf-8"))["setups"]
+        assert [item["setup_id"] for item in source_scenes] == [item["trial_id"] for item in scenes]
+        for item in source_scenes:
+            reference = item["reference"]
+            options = item["options"]
+            assert len(options) == 3
+            assert all(option["group_id"] == reference["group_id"] for option in options)
+            assert all(option["image_id"] != reference["image_id"] for option in options)
+            matches = [index + 1 for index, option in enumerate(options) if option["material_id"] == reference["material_id"]]
+            assert matches == [item["correct_option"]]
+            if item["change_type"] == "illumination":
+                assert all(option["geometry_id"] == reference["geometry_id"] for option in options)
+                assert len({option["illumination_id"] for option in options}) == 1
+                assert options[0]["illumination_id"] != reference["illumination_id"]
+            else:
+                assert item["change_type"] == "geometry"
+                assert all(option["illumination_id"] == reference["illumination_id"] for option in options)
+                assert len({option["geometry_id"] for option in options}) == 1
+                assert options[0]["geometry_id"] != reference["geometry_id"]
 
     selection_levels = Counter(item["difficulty_level"] for item in selections)
     selection_positives = Counter(item["positive_count"] for item in selections)
@@ -181,12 +191,13 @@ def main() -> None:
         image_paths.update(candidate["image_path"] for candidate in item["candidates"])
 
     dimensions = Counter()
-    for relative in sorted(image_paths):
-        path = resolve_image(relative)
-        assert path.is_file(), f"Missing image: {relative} -> {path}"
-        with Image.open(path) as image:
-            dimensions[image.size] += 1
-            image.verify()
+    if not args.skip_local_assets:
+        for relative in sorted(image_paths):
+            path = resolve_image(relative)
+            assert path.is_file(), f"Missing image: {relative} -> {path}"
+            with Image.open(path) as image:
+                dimensions[image.size] += 1
+                image.verify()
 
     print(json.dumps({
         "pairs": len(pairs),
@@ -194,7 +205,8 @@ def main() -> None:
         "scene_matches": len(scenes),
         "scene_training": len(training),
         "selections": len(selections),
-        "unique_images_verified": len(image_paths),
+        "unique_image_references": len(image_paths),
+        "local_images_verified": not args.skip_local_assets,
         "image_dimensions": {f"{width}x{height}": count for (width, height), count in dimensions.items()},
         "selection_positive_counts": dict(sorted(selection_positives.items())),
         "sentinel_positions": sentinels["positions"],

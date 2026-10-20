@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import subprocess
 import tempfile
@@ -350,7 +351,12 @@ def main() -> None:
             pair_manifest = json.loads(wait_http(f"http://127.0.0.1:{server_port}/study_pairs.json"))
             first_object = pair_manifest[0]["image_path_a"]
             assert first_object.startswith("datasetv9/renders/"), "The datasetv9 stimulus manifest is not active"
-            wait_http(f"http://127.0.0.1:{server_port}/{first_object}")
+            # A developer checkout has the external dataset beside this repo;
+            # the clean GitHub runner intentionally does not. Manifest and UI
+            # validation still run in CI, while the full local asset test above
+            # verifies every physical render before release.
+            if not os.environ.get("CI"):
+                wait_http(f"http://127.0.0.1:{server_port}/{first_object}")
             wait_http(f"http://127.0.0.1:{debug_port}/json/version")
             request = Request(f"http://127.0.0.1:{debug_port}/json/new", method="PUT")
             with urlopen(request, timeout=5) as response:
