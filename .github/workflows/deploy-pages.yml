@@ -24,17 +24,27 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pillow websocket-client
+      - run: npm run lint
+      - run: npm run test:worker
+      - run: npm run test:assets
       - run: npm run build
+      - run: npm run test:e2e
+      - run: npm run test:e2e:routes
       - name: Add runtime study configuration
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
-          STIMULUS_BASE_URL: https://pub-6d66a3bbf6794bbf8d73daa755e5683c.r2.dev
+          STIMULUS_BASE_URL: ${{ vars.STIMULUS_BASE_URL }}
           STUDY_API_BASE_URL: https://perception-study-api.bunnysantiago.workers.dev
         run: |
           test -n "$STIMULUS_BASE_URL" || { echo "STIMULUS_BASE_URL is required for anonymous R2 stimuli" >&2; exit 1; }
+          case "$STIMULUS_BASE_URL" in *r2.dev*) echo "STIMULUS_BASE_URL must use the production R2 custom domain, not r2.dev" >&2; exit 1;; esac
           test -n "$STUDY_API_BASE_URL" || { echo "STUDY_API_BASE_URL is required for response submission" >&2; exit 1; }
-          node --input-type=module -e "import fs from 'node:fs'; const config = { supabaseUrl: process.env.SUPABASE_URL ?? '', supabasePublishableKey: process.env.SUPABASE_PUBLISHABLE_KEY ?? '', stimulusBaseUrl: process.env.STIMULUS_BASE_URL ?? '', apiBaseUrl: process.env.STUDY_API_BASE_URL ?? '' }; fs.writeFileSync('dist/config.js', 'window.USER_STUDY_CONFIG = ' + JSON.stringify(config) + ';\\n');"
+          node --input-type=module -e "import fs from 'node:fs'; const config = { stimulusBaseUrl: process.env.STIMULUS_BASE_URL ?? '', apiBaseUrl: process.env.STUDY_API_BASE_URL ?? '', deploymentVersion: process.env.GITHUB_SHA ?? '' }; fs.writeFileSync('dist/config.js', 'window.USER_STUDY_CONFIG = ' + JSON.stringify(config) + ';\\n');"
+      - run: npm run sanitize:deployment
+      - run: npm run test:deployment
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:

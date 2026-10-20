@@ -21,4 +21,6 @@ private/
 stimulus_generation/
 public/stimuli_tests/
 public/test4_setups/
+public/scene_matching_thumbnails/
+public/selection_thumbnails/
 cloudflare-worker/backups/

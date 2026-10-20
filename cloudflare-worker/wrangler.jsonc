@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "perception-study-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-19",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "vars": {
+    "ALLOWED_ORIGINS": "https://santiagojn.github.io,http://localhost:5173,http://127.0.0.1:5173,https://investigation-rocket-however-territory.trycloudflare.com",
+    "TOKEN_TTL_SECONDS": "43200",
+    "REQUIRE_PROLIFIC_IDENTIFIERS": "true"
+  },
+  "secrets": { "required": ["SESSION_SIGNING_SECRET"] },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "perception-study-results",
+      "database_id": "e08124e3-d9b0-4841-8899-edde9147842e",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "RESULTS_FALLBACK",
+      "bucket_name": "perception-study-results-fallback"
+    }
+  ]
+}

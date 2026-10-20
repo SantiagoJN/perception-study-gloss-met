@@ -1,6 +1,6 @@
 # One destination per test. Absolute URLs and paths relative to the deployed
 # study root are both accepted. Change only the value after the equals sign.
-test1=preview
-test2=preview
-test3=preview
-test4=preview
+test1=https://app.prolific.com/submissions/complete?cc=CQP8FXQQ
+test2=https://app.prolific.com/submissions/complete?cc=CQP8FXQQ
+test3=https://app.prolific.com/submissions/complete?cc=CQP8FXQQ
+test4=https://app.prolific.com/submissions/complete?cc=CQP8FXQQ

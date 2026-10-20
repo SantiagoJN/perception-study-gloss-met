@@ -174,7 +174,10 @@ manifest = {
     "pair_seed_sha256": sha256(pair_path),
     "reference_seed_sha256": sha256(reference_path),
 }
-(OUT / "manifest.json").write_text(
-    json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-)
+manifest_path = OUT / "manifest.json"
+if manifest_path.exists():
+    previous_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if "current_study" in previous_manifest:
+        manifest["current_study"] = previous_manifest["current_study"]
+manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 print(json.dumps(manifest, indent=2))

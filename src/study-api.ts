@@ -59,11 +59,13 @@ export type SubmissionTrial = {
 };
 
 export type StudySubmission = {
-  schemaVersion: '2026-10-20.1';
+  schemaVersion: '2026-10-20.5';
   sessionId: string;
   studyType: string;
   startedAt: string;
   completedAt: string;
+  consented: true;
+  consentedAt: string;
   assignmentBatch: string;
   inhouse: boolean;
   studyRunId?: string;
@@ -79,9 +81,11 @@ export type StudyScreenOut = Omit<StudySubmission, 'completedAt'> & {
 };
 
 export type StudyDemographicsCheckpoint = {
-  schemaVersion: '2026-10-20.2';
+  schemaVersion: '2026-10-20.5';
   sessionId: string;
   studyType: string;
+  consented: true;
+  consentedAt: string;
   demographicsSkipped: boolean;
   demographics: Record<string, unknown>;
   clientMetadata: ClientMetadata;
@@ -90,11 +94,10 @@ export type StudyDemographicsCheckpoint = {
 declare global {
   interface Window {
     USER_STUDY_CONFIG?: {
-      supabaseUrl?: string;
-      supabasePublishableKey?: string;
       stimulusBaseUrl?: string;
       apiBaseUrl?: string;
       prolificCompletionUrl?: string;
+      deploymentVersion?: string;
     };
   }
 
@@ -158,40 +161,61 @@ export async function loginToStudy(input: {
   return apiRequest('/api/v1/login', input);
 }
 
-export async function submitStudy(token: string, submission: StudySubmission): Promise<{ receiptId: string; alreadyStored: boolean; screenedOut?: boolean; sentinelFailures?: number }> {
-  return apiRequest('/api/v1/submit', submission, token);
+export type StudyStorageResult = {
+  receiptId: string;
+  alreadyStored: boolean;
+  screenedOut?: boolean;
+  sentinelFailures?: number;
+  sentinelsEvaluated?: number;
+  sentinelChecksEvaluated?: number;
+  fallbackStored?: boolean;
+  storage?: 'd1' | 'r2';
+};
+
+export async function submitStudy(token: string, submission: StudySubmission): Promise<StudyStorageResult> {
+  return apiRequest('/api/v1/submit', submission, token, 3);
 }
 
 export async function saveStudyDemographics(token: string, checkpoint: StudyDemographicsCheckpoint): Promise<{ savedAt: string; alreadyStored: boolean }> {
   return apiRequest('/api/v1/demographics', checkpoint, token);
 }
 
-export async function screenOutStudy(token: string, submission: StudyScreenOut): Promise<{ receiptId: string; sentinelFailures: number; sentinelsEvaluated: number; sentinelChecksEvaluated: number; alreadyStored: boolean }> {
-  return apiRequest('/api/v1/screen-out', submission, token);
+export async function screenOutStudy(token: string, submission: StudyScreenOut): Promise<StudyStorageResult> {
+  return apiRequest('/api/v1/screen-out', submission, token, 3);
 }
 
-async function apiRequest<T>(path: string, payload: unknown, token?: string): Promise<T> {
+async function apiRequest<T>(path: string, payload: unknown, token?: string, attempts = 1): Promise<T> {
   const base = window.USER_STUDY_CONFIG?.apiBaseUrl?.trim().replace(/\/$/, '') || DEFAULT_STUDY_API_BASE_URL;
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), 30_000);
-  try {
-    const response = await fetch(`${base}${path}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(payload),
-      cache: 'no-store',
-      signal: controller.signal,
-    });
-    const body = await response.json().catch(() => ({})) as { error?: string } & T;
-    if (!response.ok) throw new Error(body.error || `The study service returned error ${response.status}.`);
-    return body;
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw new Error('The study service did not respond in time. Please check your connection and try again.');
-    throw error;
-  } finally {
-    window.clearTimeout(timer);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 30_000);
+    try {
+      const response = await fetch(`${base}${path}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string } & T;
+      if (!response.ok) {
+        const failure = new Error(body.error || `The study service returned error ${response.status}.`);
+        if (response.status < 500 || attempt === attempts) throw failure;
+        lastError = failure;
+      } else return body;
+    } catch (error) {
+      lastError = error instanceof DOMException && error.name === 'AbortError'
+        ? new Error('The study service did not respond in time. Please check your connection and try again.')
+        : error;
+      if (attempt === attempts) throw lastError;
+    } finally {
+      window.clearTimeout(timer);
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 500 * 2 ** (attempt - 1)));
   }
+  throw lastError instanceof Error ? lastError : new Error('The study service could not be reached.');
 }

@@ -4,5 +4,173 @@
   "reference_set_count": 1200,
   "skipped_selected_reference_pairs": 64,
   "pair_seed_sha256": "4d7c7614df0f7ade2214aee65c305e4bf0d478a3d848bbfd049f18cd57a2f095",
-  "reference_seed_sha256": "c1494783d961dc4348d90a8b2a94887e9e6c7b84d64be29a92dec120ac39db1e"
+  "reference_seed_sha256": "c1494783d961dc4348d90a8b2a94887e9e6c7b84d64be29a92dec120ac39db1e",
+  "current_study": {
+    "mode": "github_pages_cloudflare_d1",
+    "session_flow": [
+      "prolific_url_and_credential_validation",
+      "consent",
+      "demographics",
+      "glossiness_metallicness_guide",
+      "task_instructions",
+      "trials",
+      "confirmed_d1_submission",
+      "completion_receipt"
+    ],
+    "entry_points": {
+      "choice": "/",
+      "testing": "/testing",
+      "pair_comparison": "/test1_pair_comparison",
+      "reference_matching": "/test2_2afc",
+      "four_material_matching": "/test3_matching",
+      "multiple_matching": "/test4_mm"
+    },
+    "direct_link_behavior": "Requires PROLIFIC_PID, STUDY_ID and SESSION_ID plus a generated username/password assigned to the route. After validation: full consent and demographic flow, then the assigned task without the chooser. Sampling uses the credential's fixed assignment seed. The final screen is rendered only after the Worker verifies that D1 stored the complete response set and returns a receipt.",
+    "common_csv_fields": [
+      "participant_id",
+      "session_id",
+      "study_type",
+      "study_started_at",
+      "completed_at",
+      "trial_number",
+      "response_time_ms",
+      "demographics_skipped",
+      "sex_assigned_at_birth",
+      "gender_identity",
+      "gender_self_description",
+      "education",
+      "education_other",
+      "normal_or_corrected_vision",
+      "background_experience_json",
+      "screen_width",
+      "screen_height",
+      "user_agent"
+    ],
+    "demographics": {
+      "sections": ["Demographic information", "Vision", "Background and experience"],
+      "sex_assigned_at_birth": ["female", "male", "intersex", "prefer_not_to_say"],
+      "gender_identity": ["woman", "man", "non_binary", "self_describe", "prefer_not_to_say"],
+      "education": ["primary", "secondary", "bachelors", "masters", "doctorate", "other"],
+      "normal_or_corrected_vision": ["no", "yes"],
+      "background_experience": ["photography", "painting_illustration", "graphic_design", "computer_graphics_rendering", "none"],
+      "background_selection": "Multiple selections, with none exclusive; exported as a JSON array",
+      "conditional_text": {"gender_self_description": "Required when gender_identity is self_describe", "education_other": "Required when education is other"},
+      "temporarily_removed_questions": ["age", "native_language", "task_language_proficiency_in_english", "country_of_origin"],
+      "restoration_note": "The removed fields, controls, CSV entries and validation remain commented in src/demographics.tsx.",
+      "validation": "All questions required; text answers limited to 300 characters and cleared when hidden; skip available only for testing",
+      "privacy_notice": "Information supports future study analysis; responses analysed and reported in aggregate without identifying individual participants; no promise of irreversible anonymization of raw records"
+    },
+    "persistence": "localStorage checkpoint on trial advance plus authenticated submission through Cloudflare Worker to D1. D1 stores the credential-to-Prolific mapping, session/demographics/training/client and Cloudflare metadata, normalized trial rows and a payload receipt. A local CSV is available only as a testing or upload-failure backup.",
+    "response_backend": {
+      "worker": "perception-study-api",
+      "endpoint": "https://perception-study-api.bunnysantiago.workers.dev",
+      "database": "perception-study-results",
+      "database_id": "e08124e3-d9b0-4841-8899-edde9147842e",
+      "jurisdiction": "eu",
+      "schema_version": "2026-10-19.1",
+      "credential_storage": "PBKDF2-SHA256 salted hashes only; plaintext distribution CSV remains private",
+      "completion_rule": "The UI enters the complete stage only after the API confirms completed status, response count and receipt_id in D1"
+    },
+    "tasks": {
+      "test2_2afc": {
+        "display_number": 2,
+        "study_type": "forcedChoice",
+        "title": "Reference matching",
+        "default_trials": 40,
+        "bank": "public/forced_choice_trials.json",
+      "bank_trials": 120,
+      "sampling": "Ten trials from each of four descriptor-derived levels: easy, medium_easy, medium_hard, and hard.",
+      "response_fields": [
+        "trial_id",
+        "difficulty_level",
+          "reference_image_id",
+          "reference_image_path",
+          "option_a_image_id",
+          "option_a_image_path",
+          "option_b_image_id",
+          "option_b_image_path",
+          "selected_option"
+        ],
+        "question": "Choose which of two options has the same underlying material as the reference."
+      },
+      "test1_pair_comparison": {
+        "display_number": 1,
+        "training": {
+          "examples": 3,
+          "assets": "public/tutorial/t01_*.png and public/tutorial/t02_*.png; preloaded before Start test",
+          "recorded_in_csv": true,
+          "csv_field": "pair_training_attempts_json",
+          "attempt_fields": ["exampleId", "exampleNumber", "attemptNumber", "identity", "gloss", "metal", "correct", "responseTimeMs", "helpOpenCount", "checkedAt"],
+          "examples_and_expected_answers": [
+            {"A": "yellow low gloss low metallic", "B": "yellow high gloss high metallic", "identity": "probably different", "glossiness": "B", "metallicness": "B"},
+            {"A": "blue high gloss low metallic", "B": "blue low gloss high metallic", "identity": "probably different", "glossiness": "A", "metallicness": "B"},
+            {"A": "yellow low gloss high metallic", "B": "same image as A", "identity": "probably same", "glossiness": "approximately same", "metallicness": "approximately same"}
+          ],
+          "progression": "All three answers must be checked and correct in every example before beginning the study; answers reset between examples",
+          "feedback": "Every incorrect identity, glossiness, or metallicness answer produces its own retry question and attribute-specific visual cue without revealing the correct answer; the information-button instruction is not repeated",
+          "logging": "Every submitted combination is appended immediately to localStorage. The complete chronological attempt array is exported as JSON in pair_training_attempts_json on every pair-trial row. Training is excluded from experimental trial numbering and timing."
+        },
+        "study_type": "pairJudgment",
+        "title": "Pair comparison",
+        "default_trials": 40,
+        "bank": "public/study_pairs.json",
+        "bank_pairs": 2400,
+        "sampling": "Five pairs from each of eight strata; randomized order and A/B placement.",
+        "response_fields": [
+          "pair_id",
+          "stratum",
+          "canonical_image_a",
+          "canonical_image_b",
+          "swapped",
+          "same_material_likelihood_1_different_5_same",
+          "relative_glossiness_b_minus_a",
+          "relative_metallicness_b_minus_a",
+          "pair_training_attempts_json"
+        ],
+        "question": "Three independent required answers for every pair: material identity (1 probably different, 3 unsure, 5 probably same), which surface appears more glossy, and which appears more metallic. Appearance comparisons are always visible and exported, including for probably same."
+      },
+      "test3_matching": {
+        "study_type": "sceneMatching",
+        "title": "In-context matching",
+        "default_trials": 20,
+        "bank": "public/scene_matching_trials.json",
+        "bank_trials": 120,
+        "training": {"examples": 2, "manifest": "public/scene_matching_training.json", "recorded_in_csv": false, "materials": "G90/G91/G92/G94 low gloss and low metallic", "conditions": ["sphere with two illuminations", "bumpiness_1 to ridges_0 with fixed illumination"]},
+        "sampling": "Balanced geometry and illumination conditions.",
+        "response_fields": [
+          "trial_id",
+          "shared_factor",
+          "target_label",
+          "first_scene_image_ids_json",
+          "second_scene_image_ids_json",
+          "selected_option"
+        ],
+        "question": "Match one labelled material across two rows of four objects."
+      },
+      "test4_mm": {
+        "study_type": "selection",
+        "title": "Multiple matching",
+        "default_trials": 20,
+        "bank": "public/selection_trials.json",
+      "bank_trials": 400,
+      "sampling": "Three SVBRDF references and seventeen measured references by default. Every setup contains same/easy, same/hard, different/easy, and different/hard candidates. The source bank retains its existing balance of 2, 3, 4, and 5 true matches among eighteen candidates. Setup sampling is unchanged; the UI temporarily displays six shuffled candidates in a 2 x 3 grid, with one or two intended matches, and allows up to two selections. The CSV records only the displayed candidate order.",
+        "response_fields": [
+          "trial_id",
+          "reference_image_id",
+          "reference_image_path",
+          "candidate_order_json",
+          "selected_candidate_ids_json",
+          "selected_count"
+        ],
+        "question": "Select every candidate with the same material as the reference."
+      }
+    },
+    "testing": {
+      "route": "/testing",
+      "default_trials": 8,
+      "skips_intro_and_demographics": true,
+      "correct_answer_button": true,
+      "ground_truth": "public/testing_ground_truth.json"
+    }
+  }
 }

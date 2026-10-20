@@ -9,6 +9,11 @@
     "preview": "vite preview",
     "lint": "oxlint src",
     "test:e2e": "python3 tests/e2e_study.py",
+    "test:e2e:routes": "python3 tests/e2e_direct_routes.py",
+    "test:assets": "python3 tests/validate_study_assets.py && python3 tests/validate_deployment_config.py",
+    "test:deployment": "python3 tests/validate_sanitized_deployment.py --root dist",
+    "test:worker": "npm --prefix cloudflare-worker test",
+    "sanitize:deployment": "python3 scripts/sanitize_public_study_artifacts.py --root dist",
     "prepare:cloudflare-manifests": "python3 scripts/anonymize_cloudflare_manifests.py"
   },
   "dependencies": {

@@ -13,7 +13,7 @@ import { collectClientMetadata, loginToStudy, readProlificIdentifiers, saveStudy
 const ASSET_BASE = import.meta.env.BASE_URL;
 const SELECTION_DISPLAY_COUNT = 6;
 const MAX_SELECTIONS = 2;
-type Stage = 'invalid' | 'login' | 'inhouse_loading' | 'welcome' | 'demographics' | 'explanation' | 'chooser' | 'instructions' | 'training' | 'study' | 'submitting' | 'screening' | 'screened_out' | 'complete';
+type Stage = 'invalid' | 'login' | 'welcome' | 'resume' | 'demographics' | 'explanation' | 'chooser' | 'instructions' | 'training' | 'study' | 'submitting' | 'screening' | 'screened_out' | 'complete';
 type StudyType = 'forcedChoice' | 'pairJudgment' | 'sceneMatching' | 'selection';
 type InhouseCredentials = { username: string; password: string; runId: string };
 type RelativeChoice = 'a' | 'same' | 'b' | '';
@@ -22,11 +22,12 @@ type TrialDifficulty = DifficultyLevel | 'sentinel';
 type SentinelMetadata = { isSentinel?: boolean; sentinelId?: string; assignmentSet?: string };
 type ManifestPair = { pair_id: string; image_path_a: string; image_path_b: string; stratum: string };
 type PairTrial = SentinelMetadata & { pairId: string; stratum: string; canonicalPathA: string; canonicalPathB: string; displayPathA: string; displayPathB: string; swapped: boolean; sameMaterialLikelihood: number | null; glossChoice: RelativeChoice; metalChoice: RelativeChoice; responseTimeMs?: number };
-type ForcedChoiceManifestTrial = { trial_id: string; difficulty_level: DifficultyLevel; reference: SelectionImage; options: [SelectionImage, SelectionImage]; correct_option: 'A' | 'B' };
+type ForcedChoiceManifestTrial = { trial_id: string; difficulty_level: DifficultyLevel; reference: SelectionImage; options: [SelectionImage, SelectionImage]; correct_option?: 'A' | 'B' };
 type ForcedChoiceTrial = SentinelMetadata & Omit<ForcedChoiceManifestTrial, 'difficulty_level'> & { difficulty_level: TrialDifficulty; selectedOption: 'A' | 'B' | ''; responseTimeMs?: number };
 type SceneMatchingManifestTrial = { trial_id: string; difficulty_level?: DifficultyLevel; shared_factor: 'geometry' | 'illumination'; target_label: 'R' | 'A' | 'B' | 'C' | 'D'; first_scene: SelectionImage[]; second_scene: SelectionImage[] };
 type SceneMatchingTrial = SentinelMetadata & Omit<SceneMatchingManifestTrial, 'difficulty_level'> & { difficulty_level?: TrialDifficulty; selectedOption: 1 | 2 | 3 | 4 | null; responseTimeMs?: number };
 type SceneMatchingTrainingExample = Omit<SceneMatchingManifestTrial, 'trial_id'> & { training_id: string; correct_option: 1 | 2 | 3 | 4 };
+type SceneTrainingAttempt = { trainingId: string; selectedOption: 1 | 2 | 3 | 4; correct: boolean; attemptedAt: string };
 type SelectionImage = { image_id: string; image_path: string; thumbnail_path?: string; material_id?: string; group_id?: string; geometry_id?: string; environment_id?: string };
 type SelectionCandidate = SelectionImage & { candidate_id: string; is_same_material?: boolean; role?: string; difficulty_score?: number };
 type SelectionManifestTrial = { trial_id: string; difficulty_level?: DifficultyLevel; reference_source_type: 'measured' | 'svbrdf' | 'datasetv9'; reference: SelectionImage; candidates: SelectionCandidate[]; positive_count?: number; profile?: string };
@@ -56,6 +57,21 @@ type TestingGroundTruth = {
   scene_matches: Record<string, 1 | 2 | 3 | 4>;
   selections: Record<string, string[]>;
 };
+type StoredProgress = {
+  schemaVersion: 1;
+  studyType: StudyType;
+  index: number;
+  metadata: SessionMetadata;
+  consentedAt: string;
+  demographics: Demographics;
+  demographicsSkipped: boolean;
+  pairTrainingAttempts: PairTrainingAttempt[];
+  sceneTrainingAttempts: SceneTrainingAttempt[];
+  pairTrials: PairTrial[];
+  forcedChoiceTrials: ForcedChoiceTrial[];
+  sceneMatchingTrials: SceneMatchingTrial[];
+  selectionTrials: SelectionTrial[];
+};
 
 const IDENTITY_OPTIONS = [{ value: 1, label: 'Probably different' }, { value: 3, label: 'Unsure' }, { value: 5, label: 'Probably same' }];
 const TEST_COPY = {
@@ -67,7 +83,9 @@ const TEST_COPY = {
 const INHOUSE_STUDY_ORDER: StudyType[] = ['pairJudgment', 'forcedChoice', 'sceneMatching', 'selection'];
 const STUDY_SESSION_SUFFIX: Record<StudyType, string> = { pairJudgment: 't1', forcedChoice: 't2', sceneMatching: 't3', selection: 't4' };
 const REDIRECT_TEST_KEYS: Record<StudyType, string> = { pairJudgment: 'test1', forcedChoice: 'test2', sceneMatching: 'test3', selection: 'test4' };
-const SENTINEL_FAILURE_LIMIT = 2;
+function sentinelScreenOutThreshold(type: StudyType) {
+  return type === 'selection' ? 3 : 2;
+}
 const PAIR_SENTINEL_ANSWERS = new Map<string, { sameMaterialLikelihood: number; canonicalGlossChoice: number; canonicalMetalChoice: number }>([
   ['SENTINEL_T1_01', { sameMaterialLikelihood: 1, canonicalGlossChoice: -1, canonicalMetalChoice: 0 }],
   ['SENTINEL_T1_02', { sameMaterialLikelihood: 1, canonicalGlossChoice: -1, canonicalMetalChoice: -1 }],
@@ -106,6 +124,7 @@ function readSessionMetadata(prolificPid: string): SessionMetadata {
   const participantId = prolificPid || new URLSearchParams(location.search).get('participant')?.trim() || `anonymous-${createId()}`;
   return { participantId, sessionId: createId(), startedAt: new Date().toISOString(), userAgent: navigator.userAgent, screenWidth: screen.width, screenHeight: screen.height };
 }
+function progressStorageKey(sessionId: string) { return `material-constancy-progress-${sessionId}`; }
 function directStudyType(): StudyType | null {
   const segments = location.pathname.replace(/\/+$/, '').split('/');
   const route = segments[segments.length - 1];
@@ -114,7 +133,8 @@ function directStudyType(): StudyType | null {
 function isTestingRoute() { return location.pathname.replace(/\/+$/, '').endsWith('/testing'); }
 function isPreviewRoute() { return location.pathname.replace(/\/+$/, '').endsWith('/preview'); }
 function isInhouseRoute() { return location.pathname.replace(/\/+$/, '').endsWith('/inhouse'); }
-function isTestingMode() { return isTestingRoute() || new URLSearchParams(location.search).get('testing') === '1'; }
+function isLocalDevelopmentHost() { return ['localhost', '127.0.0.1', '::1'].includes(location.hostname); }
+function isTestingMode() { return isLocalDevelopmentHost() && (isTestingRoute() || new URLSearchParams(location.search).get('testing') === '1'); }
 function trialCount(type: StudyType) {
   if (isPreviewRoute()) return 50;
   if (!isTestingMode()) return 50;
@@ -127,6 +147,11 @@ function hashSeed(text: string) { let value = 2166136261; for (let i = 0; i < te
 function rng(seed: number) { let state = seed >>> 0; return () => { state += 0x6d2b79f5; let value = state; value = Math.imul(value ^ value >>> 15, value | 1); value ^= value + Math.imul(value ^ value >>> 7, value | 61); return ((value ^ value >>> 14) >>> 0) / 4294967296; }; }
 function shuffle<T>(items: T[], random: () => number) { const out = [...items]; for (let i = out.length - 1; i > 0; i -= 1) { const j = Math.floor(random() * (i + 1)); [out[i], out[j]] = [out[j], out[i]]; } return out; }
 function assetUrl(path: string) { return ASSET_BASE + path.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/'); }
+function manifestUrl(path: string) {
+  const version = window.USER_STUDY_CONFIG?.deploymentVersion?.trim();
+  const url = assetUrl(path);
+  return version ? `${url}?v=${encodeURIComponent(version)}` : url;
+}
 function stimulusUrl(path: string) {
   if (/^https?:\/\//i.test(path)) return path;
   const configuredBase = window.USER_STUDY_CONFIG?.stimulusBaseUrl?.trim().replace(/\/$/, '');
@@ -140,7 +165,7 @@ function studyImageUrl(path: string) {
   return /^(datasetv\d+\/|datasetv9\/groups4\/)/.test(path.replace(/^\/+/, '')) ? stimulusUrl(path) : assetUrl(path);
 }
 async function configuredTestEntry(filename: string, type: StudyType, description: string) {
-  const response = await fetch(assetUrl(filename), { cache: 'no-store' });
+  const response = await fetch(manifestUrl(filename), { cache: 'no-store' });
   if (!response.ok) throw new Error(`The ${description} configuration could not be loaded.`);
   const entries = new Map<string, string>();
   for (const rawLine of (await response.text()).split(/\r?\n/)) {
@@ -152,6 +177,7 @@ async function configuredTestEntry(filename: string, type: StudyType, descriptio
   }
   const value = entries.get(REDIRECT_TEST_KEYS[type]);
   if (!value) throw new Error(`No ${description} is configured for ${REDIRECT_TEST_KEYS[type]}.`);
+  if (/REPLACE_|(?:^|\/)preview\/?$/i.test(value)) throw new Error(`The ${description} for ${REDIRECT_TEST_KEYS[type]} is still a placeholder.`);
   return value;
 }
 async function configuredRedirect(type: StudyType, outcome: 'completion' | 'screen_out') {
@@ -247,13 +273,10 @@ function selectForcedChoices(entries: ForcedChoiceManifestTrial[], count: number
   const levels: ForcedChoiceManifestTrial['difficulty_level'][] = ['easy', 'medium_easy', 'medium_hard', 'hard'];
   if (count % levels.length) throw new Error('Reference-matching sessions must contain an equal number of trials from all four difficulty levels.');
   const each = count / levels.length;
-  if (each % 2) throw new Error('Reference-matching sessions must allow an equal number of correct A and B options at every difficulty level.');
   const selected = levels.flatMap((level) => {
-    return (['A', 'B'] as const).flatMap((side) => {
-      const options = entries.filter((entry) => entry.difficulty_level === level && entry.correct_option === side);
-      if (options.length < each / 2) throw new Error(`Only ${options.length} ${level}/${side} reference-matching trials exist.`);
-      return shuffle(options, random).slice(0, each / 2);
-    });
+    const options = entries.filter((entry) => entry.difficulty_level === level);
+    if (options.length < each) throw new Error(`Only ${options.length} ${level} reference-matching trials exist.`);
+    return shuffle(options, random).slice(0, each);
   });
   return shuffle(selected, random).map((entry) => ({ ...entry, selectedOption: '' }));
 }
@@ -283,7 +306,7 @@ const FIXED_GROUP_TEST_KEYS: Record<StudyType, 'test1' | 'test2' | 'test3' | 'te
   selection: 'test4',
 };
 async function loadFixedTrialGroup(type: StudyType, assignmentSeed: string): Promise<FixedTrialAssignment> {
-  const response = await fetch(assetUrl('fixed_trial_groups.json'), { cache: 'no-store' });
+  const response = await fetch(manifestUrl('fixed_trial_groups.json'), { cache: 'no-store' });
   if (!response.ok) throw new Error('The fixed participant sets are unavailable.');
   const manifest = await response.json() as FixedTrialGroupsManifest;
   const groups = manifest.tests?.[FIXED_GROUP_TEST_KEYS[type]]?.groups;
@@ -377,7 +400,7 @@ function selectionSentinels(config: SentinelConfig, seed: string): SelectionTria
   });
 }
 async function loadSentinelConfig(): Promise<SentinelConfig> {
-  const response = await fetch(assetUrl('sentinel_trials.json'), { cache: 'no-store' });
+  const response = await fetch(manifestUrl('sentinel_trials.json'), { cache: 'no-store' });
   if (!response.ok) throw new Error('Sentinel trials are unavailable.');
   const config = await response.json() as SentinelConfig;
   if (!Array.isArray(config.positions) || config.positions.length !== 5 || Object.values(config.tests).some((setups) => setups.length !== 5)) throw new Error('The sentinel configuration is incomplete.');
@@ -430,32 +453,32 @@ function submissionTrials(type: StudyType, pairs: PairTrial[], forced: ForcedCho
   }));
 }
 
-function sentinelErrorCount(type: StudyType, trials: SubmissionTrial[]) {
-  return trials.filter((trial) => trial.isSentinel).reduce((total, trial) => total + sentinelResponseErrors(type, trial), 0);
+function sentinelFailureCount(type: StudyType, trials: SubmissionTrial[]) {
+  return trials.filter((trial) => trial.isSentinel).reduce((total, trial) => total + Number(sentinelFailed(type, trial)), 0);
 }
 
-function sentinelResponseErrors(type: StudyType, trial: SubmissionTrial) {
+function sentinelFailed(type: StudyType, trial: SubmissionTrial) {
   const response = trial.response;
   if (type === 'pairJudgment') {
     const expected = PAIR_SENTINEL_ANSWERS.get(trial.sentinelId ?? '');
-    if (!expected) return 0;
+    if (!expected) return false;
     return [
       Number(response.sameMaterialLikelihood) !== expected.sameMaterialLikelihood,
       Number(response.canonicalGlossChoice) !== expected.canonicalGlossChoice,
       Number(response.canonicalMetalChoice) !== expected.canonicalMetalChoice,
-    ].filter(Boolean).length;
+    ].some(Boolean);
   }
   if (type === 'forcedChoice') {
-    return Number(response.selectedOption !== FORCED_SENTINEL_ANSWERS.get(trial.sentinelId ?? ''));
+    return response.selectedOption !== FORCED_SENTINEL_ANSWERS.get(trial.sentinelId ?? '');
   }
   if (type === 'sceneMatching') {
-    return Number(Number(response.selectedOption) !== SCENE_SENTINEL_ANSWERS.get(trial.sentinelId ?? ''));
+    return Number(response.selectedOption) !== SCENE_SENTINEL_ANSWERS.get(trial.sentinelId ?? '');
   }
   const candidates = Array.isArray(response.candidates)
     ? response.candidates as Array<{ candidate_id?: unknown; is_same_material?: unknown }>
     : [];
   const selected = new Set(Array.isArray(response.selectedCandidateIds) ? response.selectedCandidateIds.map(String) : []);
-  return candidates.filter((candidate) => selected.has(String(candidate.candidate_id)) !== (candidate.is_same_material === true)).length;
+  return candidates.some((candidate) => selected.has(String(candidate.candidate_id)) !== (candidate.is_same_material === true));
 }
 
 function TutorialExamples({ attribute }: { attribute: 'glossiness' | 'metallicness' }) {
@@ -498,11 +521,13 @@ function CompositeSceneFigure({ image, labels, selectedOption, correctOption, sh
 }
 
 export default function App() {
-  const directTesting = isTestingRoute(); const previewMode = isPreviewRoute(); const inhouseRoute = isInhouseRoute(); const assignedStudyType = inhouseRoute ? 'pairJudgment' : directStudyType();
+  const directTesting = isTestingMode(); const previewMode = isPreviewRoute(); const inhouseRoute = isInhouseRoute(); const assignedStudyType = inhouseRoute ? 'pairJudgment' : directStudyType();
   const prolific = useMemo(readProlificIdentifiers, []);
+  const prolificIdentifierCount = Object.values(prolific).filter(Boolean).length;
+  const participantLinkValid = !assignedStudyType || inhouseRoute || prolificIdentifierCount === 3;
   const initialClientMetadata = useMemo(collectClientMetadata, []);
   const metadata = useMemo(() => readSessionMetadata(prolific.prolificPid), [prolific.prolificPid]);
-  const [stage, setStage] = useState<Stage>(directTesting ? 'chooser' : previewMode ? 'welcome' : inhouseRoute ? 'inhouse_loading' : assignedStudyType ? 'login' : 'invalid'); const [studyType, setStudyType] = useState<StudyType | null>(assignedStudyType);
+  const [stage, setStage] = useState<Stage>(directTesting ? 'chooser' : previewMode ? 'welcome' : assignedStudyType && participantLinkValid ? 'login' : 'invalid'); const [studyType, setStudyType] = useState<StudyType | null>(assignedStudyType);
   const [authSession, setAuthSession] = useState<AuthenticatedStudySession | null>(null);
   const inhouseCredentials = useRef<InhouseCredentials | null>(null);
   const [pendingSubmission, setPendingSubmission] = useState<StudySubmission | null>(null);
@@ -514,23 +539,24 @@ export default function App() {
   const [outcomeUrl, setOutcomeUrl] = useState('');
   const [outcomeCode, setOutcomeCode] = useState('');
   const [outcomeCodeCopied, setOutcomeCodeCopied] = useState(false);
-  const [fallbackCsvDownloaded, setFallbackCsvDownloaded] = useState(false);
-  const [fallbackCompletion, setFallbackCompletion] = useState(false);
   const [receiptId, setReceiptId] = useState('');
-  const [consented, setConsented] = useState(false); const [demographics, setDemographics] = useState(EMPTY_DEMOGRAPHICS); const [demographicsSkipped, setDemographicsSkipped] = useState(directTesting);
+  const [resultStorage, setResultStorage] = useState<'d1' | 'r2' | ''>('');
+  const [resumeIndex, setResumeIndex] = useState(0);
+  const [consented, setConsented] = useState(false); const [consentedAt, setConsentedAt] = useState(''); const [demographics, setDemographics] = useState(EMPTY_DEMOGRAPHICS); const [demographicsSkipped, setDemographicsSkipped] = useState(directTesting);
   const [pairTrials, setPairTrials] = useState<PairTrial[]>([]); const [forcedChoiceTrials, setForcedChoiceTrials] = useState<ForcedChoiceTrial[]>([]); const [sceneMatchingTrials, setSceneMatchingTrials] = useState<SceneMatchingTrial[]>([]); const [selectionTrials, setSelectionTrials] = useState<SelectionTrial[]>([]); const [index, setIndex] = useState(0);
   const [pairTrainingAttempts, setPairTrainingAttempts] = useState<PairTrainingAttempt[]>([]);
+  const [sceneTrainingAttempts, setSceneTrainingAttempts] = useState<SceneTrainingAttempt[]>([]);
   const [trainingExamples, setTrainingExamples] = useState<SceneMatchingTrainingExample[]>([]); const [trainingIndex, setTrainingIndex] = useState(0); const [trainingChoice, setTrainingChoice] = useState<1 | 2 | 3 | 4 | null>(null); const [trainingRevealed, setTrainingRevealed] = useState(false); const [trainingIncorrect, setTrainingIncorrect] = useState(false);
   const [preparing, setPreparing] = useState(false); const [prepared, setPrepared] = useState(false); const [error, setError] = useState('');
   const [showHelp, setShowHelp] = useState(false); const [lightboxPath, setLightboxPath] = useState(''); const [selectionLimitNotice, setSelectionLimitNotice] = useState(false); const trialStartedAt = useRef(0); const selectionLimitTimer = useRef<number | null>(null);
+  const originalStartedAt = useRef(metadata.startedAt);
+  const restoredSessionId = useRef('');
   const [testingGroundTruth, setTestingGroundTruth] = useState<TestingGroundTruth | null>(null); const [showCorrectAnswer, setShowCorrectAnswer] = useState(false);
   const preparationId = useRef(0); const automaticPreparationStarted = useRef(false);
-  const automaticInhouseLoginStarted = useRef(false);
   const testingMode = isTestingMode();
   const inhouse = authSession?.inhouse === true;
   const assignedBatch = authSession?.assignmentBatch ?? '';
   const inhouseTaskIndex = studyType ? INHOUSE_STUDY_ORDER.indexOf(studyType) : -1;
-  const finalUploadFallbackAvailable = !inhouse || inhouseTaskIndex === INHOUSE_STUDY_ORDER.length - 1;
   const demographicsComplete = isDemographicsComplete(demographics, inhouse);
   const currentPair = pairTrials[index]; const currentForcedChoice = forcedChoiceTrials[index]; const currentSceneMatching = sceneMatchingTrials[index]; const currentSelection = selectionTrials[index];
   const correctPairAnswer = currentPair ? testingGroundTruth?.pairs[currentPair.pairId] : undefined;
@@ -542,6 +568,9 @@ export default function App() {
 
   useEffect(() => {
     window.scrollTo(0, 0);
+    document.querySelectorAll<HTMLButtonElement>('.attribute-help-button:not([aria-label])').forEach((button) => {
+      button.setAttribute('aria-label', 'Information about material, glossiness and metallicness');
+    });
   }, [stage, index, trainingIndex]);
   useEffect(() => {
     // Keep the original asset URL out of the browser's ordinary image context
@@ -573,14 +602,44 @@ export default function App() {
     void prepare(initialType, authSession?.assignmentSeed);
   }, [assignedStudyType, authSession, directTesting, studyType]);
   useEffect(() => {
-    if (!inhouseRoute || automaticInhouseLoginStarted.current) return;
-    automaticInhouseLoginStarted.current = true;
-    void enterInhouse();
-  }, [inhouseRoute]);
+    if (!prepared || !authSession || !studyType || restoredSessionId.current === authSession.sessionId || authSession.alreadyCompleted || authSession.screenedOut) return;
+    restoredSessionId.current = authSession.sessionId;
+    try {
+      const serialized = localStorage.getItem(progressStorageKey(authSession.sessionId));
+      if (!serialized) return;
+      const saved = JSON.parse(serialized) as Partial<StoredProgress>;
+      if (saved.schemaVersion !== 1 || saved.studyType !== studyType || !Number.isInteger(saved.index) || Number(saved.index) < 0) return;
+      const preparedIds = studyType === 'pairJudgment' ? pairTrials.map((trial) => trial.pairId)
+        : studyType === 'forcedChoice' ? forcedChoiceTrials.map((trial) => trial.trial_id)
+          : studyType === 'sceneMatching' ? sceneMatchingTrials.map((trial) => trial.trial_id)
+            : selectionTrials.map((trial) => trial.trial_id);
+      const restoredIds = studyType === 'pairJudgment' ? saved.pairTrials?.map((trial) => trial.pairId)
+        : studyType === 'forcedChoice' ? saved.forcedChoiceTrials?.map((trial) => trial.trial_id)
+          : studyType === 'sceneMatching' ? saved.sceneMatchingTrials?.map((trial) => trial.trial_id)
+            : saved.selectionTrials?.map((trial) => trial.trial_id);
+      if (!restoredIds?.length || restoredIds.length !== preparedIds.length || new Set(restoredIds).size !== restoredIds.length || restoredIds.some((id) => !preparedIds.includes(id))) return;
+      if (saved.pairTrials) setPairTrials(saved.pairTrials);
+      if (saved.forcedChoiceTrials) setForcedChoiceTrials(saved.forcedChoiceTrials);
+      if (saved.sceneMatchingTrials) setSceneMatchingTrials(saved.sceneMatchingTrials);
+      if (saved.selectionTrials) setSelectionTrials(saved.selectionTrials);
+      if (saved.demographics) setDemographics(saved.demographics);
+      setDemographicsSkipped(saved.demographicsSkipped === true);
+      setPairTrainingAttempts(saved.pairTrainingAttempts ?? []);
+      setSceneTrainingAttempts(saved.sceneTrainingAttempts ?? []);
+      setConsented(true);
+      setConsentedAt(saved.consentedAt || new Date().toISOString());
+      originalStartedAt.current = saved.metadata?.startedAt || metadata.startedAt;
+      const nextIndex = Math.min(Number(saved.index), restoredIds.length - 1);
+      setResumeIndex(nextIndex);
+      setStage('resume');
+    } catch (cause) {
+      console.warn('Stored study progress could not be restored.', cause);
+    }
+  }, [prepared, authSession, studyType, pairTrials, forcedChoiceTrials, sceneMatchingTrials, selectionTrials, metadata.startedAt]);
   useEffect(() => {
     if (!directTesting) return;
     let cancelled = false;
-    void fetch(assetUrl('testing_ground_truth.json'), { cache: 'no-store' })
+    void fetch(manifestUrl('testing_ground_truth.json'), { cache: 'no-store' })
       .then((response) => { if (!response.ok) throw new Error('Testing answers are unavailable.'); return response.json() as Promise<TestingGroundTruth>; })
       .then((answers) => { if (!cancelled) setTestingGroundTruth(answers); })
       .catch((cause) => console.error('Could not load testing ground truth.', cause));
@@ -609,6 +668,10 @@ export default function App() {
     const urls = pairTrials.slice(index, index + 3).flatMap((trial) => [stimulusUrl(trial.displayPathA), stimulusUrl(trial.displayPathB)]);
     void preloadImages(urls).catch((cause) => console.warn('A pair image could not be preloaded after retries.', cause));
   }, [stage, studyType, index, pairTrials]);
+  useEffect(() => {
+    if (stage !== 'study' || !studyType) return;
+    persistProgress(index);
+  }, [stage, studyType, index, pairTrials, forcedChoiceTrials, sceneMatchingTrials, selectionTrials, pairTrainingAttempts, sceneTrainingAttempts]);
 
   async function prepare(type: StudyType, assignmentSeedOverride?: string) {
     const requestId = ++preparationId.current;
@@ -621,11 +684,11 @@ export default function App() {
     setPreparing(true); setPrepared(false); setError('');
     try {
       const [sentinelConfig, fixedAssignment] = await Promise.all([
-        sampleMode ? Promise.resolve(null) : loadSentinelConfig(),
+        directTesting ? Promise.resolve(null) : loadSentinelConfig(),
         loadFixedTrialGroup(type, assignmentSeed),
       ]);
       if (type === 'selection') {
-        const response = await fetch(assetUrl('selection_trials.json'), { cache: 'no-store' });
+        const response = await fetch(manifestUrl('selection_trials.json'), { cache: 'no-store' });
         if (!response.ok) throw new Error('Selection trials are not available yet. Generate them after datasetv7 and G90 are complete.');
         const payload = await response.json() as { trials?: SelectionManifestTrial[] } | SelectionManifestTrial[]; const entries = Array.isArray(payload) ? payload : payload.trials ?? [];
         const requested = trialCount(type);
@@ -635,7 +698,7 @@ export default function App() {
         if (fixedAssignment) selected = selected.map((trial) => ({ ...trial, assignmentSet: fixedAssignment.setId }));
         const urls = selected.slice(0, 1).flatMap((t) => [studyImageUrl(selectionDisplayPath(t.reference)), ...t.candidates.map((c) => studyImageUrl(selectionDisplayPath(c)))]); await preloadImages(urls); if (requestId !== preparationId.current) return; setSelectionTrials(selected);
       } else if (type === 'forcedChoice') {
-        const response = await fetch(assetUrl('forced_choice_trials.json'), { cache: 'no-store' });
+        const response = await fetch(manifestUrl('forced_choice_trials.json'), { cache: 'no-store' });
         if (!response.ok) throw new Error('Reference-matching trials are unavailable.');
         const payload = await response.json() as { trials: ForcedChoiceManifestTrial[] };
         const requested = trialCount(type);
@@ -647,8 +710,8 @@ export default function App() {
         await preloadImages(urls); if (requestId !== preparationId.current) return; setForcedChoiceTrials(selected);
       } else if (type === 'sceneMatching') {
         const [response, trainingResponse] = await Promise.all([
-          fetch(assetUrl('scene_matching_trials.json'), { cache: 'no-store' }),
-          fetch(assetUrl('scene_matching_training.json'), { cache: 'no-store' }),
+          fetch(manifestUrl('scene_matching_trials.json'), { cache: 'no-store' }),
+          fetch(manifestUrl('scene_matching_training.json'), { cache: 'no-store' }),
         ]);
         if (!response.ok) throw new Error('Four-material trials are unavailable.');
         if (!trainingResponse.ok) throw new Error('Training examples are unavailable.');
@@ -666,7 +729,7 @@ export default function App() {
         const urls = [...selected.slice(0, 1), ...examples].flatMap((trial) => [...trial.first_scene, ...trial.second_scene].map((image) => studyImageUrl(selectionDisplayPath(image))));
         await preloadImages(urls); if (requestId !== preparationId.current) return; setSceneMatchingTrials(selected); setTrainingExamples(examples);
       } else {
-        const response = await fetch(assetUrl('study_pairs.json'), { cache: 'no-store' }); if (!response.ok) throw new Error('The local pair manifest is unavailable.');
+        const response = await fetch(manifestUrl('study_pairs.json'), { cache: 'no-store' }); if (!response.ok) throw new Error('The local pair manifest is unavailable.');
         const entries = await response.json() as ManifestPair[];
         const requested = trialCount(type);
         const fixedEntries = fixedRows(entries, fixedAssignment.trialIds, (entry) => entry.pair_id);
@@ -696,7 +759,7 @@ export default function App() {
       });
       lastAuthenticated = authenticated;
       if (!authenticated.inhouse) throw new Error('The in-house study account could not be verified.');
-      if (!authenticated.alreadyCompleted) return { authenticated, type, completed, lastAuthenticated };
+      if (!authenticated.alreadyCompleted && !authenticated.screenedOut) return { authenticated, type, completed, lastAuthenticated };
       completed.push(type);
     }
     return { authenticated: null, type: null, completed, lastAuthenticated };
@@ -740,27 +803,42 @@ export default function App() {
     }
     setStage('welcome');
   }
-  async function enterInhouse() {
-    setSubmissionError('');
-    try {
-      await login('gilab-inhouse', 'gilab-inhouse');
-    } catch (cause) {
-      setSubmissionError(cause instanceof Error ? cause.message : 'The in-house study could not be opened.');
-    }
-  }
   function start() { if (!prepared) return; setIndex(0); if (studyType === 'pairJudgment') { setStage('training'); return; } if (studyType === 'sceneMatching') { setTrainingIndex(0); setTrainingChoice(null); setTrainingRevealed(false); setTrainingIncorrect(false); setStage('training'); return; } trialStartedAt.current = performance.now(); setStage('study'); }
+  function persistProgress(nextIndex: number, nextPairs = pairTrials, nextForced = forcedChoiceTrials, nextScene = sceneMatchingTrials, nextSets = selectionTrials, nextTraining = pairTrainingAttempts, nextDemographicsSkipped = demographicsSkipped) {
+    if (!studyType) return;
+    const sessionId = authSession?.sessionId ?? metadata.sessionId;
+    const stored: StoredProgress = {
+      schemaVersion: 1,
+      studyType,
+      index: nextIndex,
+      metadata: { ...metadata, sessionId, startedAt: originalStartedAt.current },
+      consentedAt: consentedAt || new Date().toISOString(),
+      demographics,
+      demographicsSkipped: nextDemographicsSkipped,
+      pairTrainingAttempts: nextTraining,
+      sceneTrainingAttempts,
+      pairTrials: nextPairs,
+      forcedChoiceTrials: nextForced,
+      sceneMatchingTrials: nextScene,
+      selectionTrials: nextSets,
+    };
+    try { localStorage.setItem(progressStorageKey(sessionId), JSON.stringify(stored)); }
+    catch (cause) { console.warn('Study progress could not be stored locally.', cause); }
+  }
   async function continueFromDemographics(skipped: boolean) {
     setDemographicsSkipped(skipped);
     setDemographicsSaveError('');
-    localStorage.setItem(`material-constancy-${metadata.sessionId}`, JSON.stringify({ metadata, demographics, demographicsSkipped: skipped, studyType, pairTrainingAttempts, pairTrials, forcedChoiceTrials, sceneMatchingTrials, selectionTrials }));
+    persistProgress(0, pairTrials, forcedChoiceTrials, sceneMatchingTrials, selectionTrials, pairTrainingAttempts, skipped);
     if (directTesting || previewMode) { setStage('explanation'); return; }
     if (!authSession || !studyType) { setDemographicsSaveError('Your authenticated session is missing. Please sign in again.'); return; }
     setDemographicsSaving(true);
     try {
       await saveStudyDemographics(authSession.token, {
-        schemaVersion: '2026-10-20.2',
+        schemaVersion: '2026-10-20.5',
         sessionId: authSession.sessionId,
         studyType,
+        consented: true,
+        consentedAt: consentedAt || new Date().toISOString(),
         demographicsSkipped: skipped,
         demographics: demographicsPayload(demographics, inhouse),
         clientMetadata: collectClientMetadata(),
@@ -773,10 +851,18 @@ export default function App() {
     }
   }
   function advanceTraining() { if (!trainingRevealed || trainingChoice !== trainingExamples[trainingIndex]?.correct_option) return; if (trainingIndex + 1 < trainingExamples.length) { setTrainingIndex((value) => value + 1); setTrainingChoice(null); setTrainingRevealed(false); setTrainingIncorrect(false); return; } setIndex(0); trialStartedAt.current = performance.now(); setStage('study'); }
+  function checkSceneTrainingAnswer() {
+    const example = trainingExamples[trainingIndex];
+    if (!example || trainingChoice === null) return;
+    const correct = trainingChoice === example.correct_option;
+    setSceneTrainingAttempts((attempts) => [...attempts, { trainingId: example.training_id, selectedOption: trainingChoice, correct, attemptedAt: new Date().toISOString() }]);
+    if (correct) setTrainingRevealed(true);
+    else setTrainingIncorrect(true);
+  }
   function recordPairTrainingAttempt(attempt: PairTrainingAttempt) {
     setPairTrainingAttempts((current) => {
       const next = [...current, attempt];
-      localStorage.setItem(`material-constancy-${metadata.sessionId}`, JSON.stringify({ metadata, demographics, demographicsSkipped, studyType, pairTrainingAttempts: next, pairTrials, forcedChoiceTrials, sceneMatchingTrials, selectionTrials }));
+      persistProgress(index, pairTrials, forcedChoiceTrials, sceneMatchingTrials, selectionTrials, next);
       return next;
     });
   }
@@ -836,8 +922,9 @@ export default function App() {
     setSubmissionError('');
     try {
       const result = await submitStudy(submittedSession.token, submission);
-      setFallbackCompletion(false);
       setReceiptId(result.receiptId);
+      setResultStorage(result.storage ?? (result.fallbackStored ? 'r2' : 'd1'));
+      localStorage.removeItem(progressStorageKey(submittedSession.sessionId));
       if (result.screenedOut) {
         setPendingSubmission(null);
         await showOutcomeScreen(submission.studyType as StudyType, 'screen_out');
@@ -859,7 +946,6 @@ export default function App() {
           setTrainingChoice(null);
           setTrainingRevealed(false);
           setTrainingIncorrect(false);
-          setFallbackCsvDownloaded(false);
           await prepare(next.type, next.authenticated.assignmentSeed);
           setPendingSubmission(null);
           setStage('instructions');
@@ -873,24 +959,14 @@ export default function App() {
       setSubmissionError(cause instanceof Error ? cause.message : 'The responses could not be uploaded. Please try again.');
     }
   }
-  function downloadFallbackCsv() {
-    downloadCurrent();
-    setFallbackCsvDownloaded(true);
-  }
-  async function finishWithLocalBackup() {
-    if (!fallbackCsvDownloaded || !studyType) return;
-    setFallbackCompletion(true);
-    setPendingSubmission(null);
-    setSubmissionError('');
-    setReceiptId('');
-    await showOutcomeScreen(studyType, 'completion');
-  }
   async function uploadScreenOut(submission: StudyScreenOut) {
     if (!authSession) { setSubmissionError('Your authenticated session is missing. Please contact the study organiser.'); return; }
     setSubmissionError('');
     try {
       const result = await screenOutStudy(authSession.token, submission);
       setReceiptId(result.receiptId);
+      setResultStorage(result.storage ?? (result.fallbackStored ? 'r2' : 'd1'));
+      localStorage.removeItem(progressStorageKey(authSession.sessionId));
       setPendingScreenOut(null);
       await showOutcomeScreen(submission.studyType as StudyType, 'screen_out');
     } catch (cause) {
@@ -898,14 +974,22 @@ export default function App() {
     }
   }
   function advance(nextPairs: PairTrial[], nextForced: ForcedChoiceTrial[], nextScene: SceneMatchingTrial[], nextSets: SelectionTrial[]) {
-    localStorage.setItem(`material-constancy-${metadata.sessionId}`, JSON.stringify({ metadata, demographics, demographicsSkipped, studyType, pairTrainingAttempts, pairTrials: nextPairs, forcedChoiceTrials: nextForced, sceneMatchingTrials: nextScene, selectionTrials: nextSets })); setShowHelp(false); setShowCorrectAnswer(false); clearSelectionLimitNotice();
+    persistProgress(Math.min(index + 1, Math.max(0, activeCount - 1)), nextPairs, nextForced, nextScene, nextSets); setShowHelp(false); setShowCorrectAnswer(false); clearSelectionLimitNotice();
     if (studyType && !directTesting && !previewMode) {
       const answeredTrials = submissionTrials(studyType, nextPairs, nextForced, nextScene, nextSets).slice(0, index + 1);
-      if (sentinelErrorCount(studyType, answeredTrials) > SENTINEL_FAILURE_LIMIT) {
-        const screening: StudyScreenOut = { schemaVersion: '2026-10-20.1', sessionId: authSession?.sessionId ?? metadata.sessionId, studyType, startedAt: metadata.startedAt, screenedOutAt: new Date().toISOString(), assignmentBatch: assignedBatch, inhouse, studyRunId: authSession?.studyRunId ?? undefined, demographicsSkipped, demographics: demographicsPayload(demographics, inhouse), trainingAttempts: studyType === 'pairJudgment' ? pairTrainingAttempts : [], trials: answeredTrials, clientMetadata: collectClientMetadata() };
+      if (!inhouse && sentinelFailureCount(studyType, answeredTrials) >= sentinelScreenOutThreshold(studyType)) {
+        const screening: StudyScreenOut = { schemaVersion: '2026-10-20.5', sessionId: authSession?.sessionId ?? metadata.sessionId, studyType, startedAt: originalStartedAt.current, screenedOutAt: new Date().toISOString(), consented: true, consentedAt: consentedAt || new Date().toISOString(), assignmentBatch: assignedBatch, inhouse, studyRunId: authSession?.studyRunId ?? undefined, demographicsSkipped, demographics: demographicsPayload(demographics, inhouse), trainingAttempts: studyType === 'pairJudgment' ? pairTrainingAttempts : studyType === 'sceneMatching' ? sceneTrainingAttempts : [], trials: answeredTrials, clientMetadata: collectClientMetadata() };
         setPendingScreenOut(screening);
         setStage('screening');
         void uploadScreenOut(screening);
+        return;
+      }
+    }
+    if (studyType && previewMode) {
+      const answeredTrials = submissionTrials(studyType, nextPairs, nextForced, nextScene, nextSets).slice(0, index + 1);
+      if (sentinelFailureCount(studyType, answeredTrials) >= sentinelScreenOutThreshold(studyType)) {
+        setStage('screening');
+        void showOutcomeScreen(studyType, 'screen_out');
         return;
       }
     }
@@ -919,26 +1003,35 @@ export default function App() {
         return;
       }
       if (!studyType) return;
-      const submission: StudySubmission = { schemaVersion: '2026-10-20.1', sessionId: authSession?.sessionId ?? metadata.sessionId, studyType, startedAt: metadata.startedAt, completedAt: new Date().toISOString(), assignmentBatch: assignedBatch, inhouse, studyRunId: authSession?.studyRunId ?? undefined, demographicsSkipped, demographics: demographicsPayload(demographics, inhouse), trainingAttempts: studyType === 'pairJudgment' ? pairTrainingAttempts : [], trials: submissionTrials(studyType, nextPairs, nextForced, nextScene, nextSets), clientMetadata: collectClientMetadata() };
+      const submission: StudySubmission = { schemaVersion: '2026-10-20.5', sessionId: authSession?.sessionId ?? metadata.sessionId, studyType, startedAt: originalStartedAt.current, completedAt: new Date().toISOString(), consented: true, consentedAt: consentedAt || new Date().toISOString(), assignmentBatch: assignedBatch, inhouse, studyRunId: authSession?.studyRunId ?? undefined, demographicsSkipped, demographics: demographicsPayload(demographics, inhouse), trainingAttempts: studyType === 'pairJudgment' ? pairTrainingAttempts : studyType === 'sceneMatching' ? sceneTrainingAttempts : [], trials: submissionTrials(studyType, nextPairs, nextForced, nextScene, nextSets), clientMetadata: collectClientMetadata() };
       setPendingSubmission(submission);
       setStage('submitting');
       void uploadSubmission(submission);
     }
     else { setIndex((value) => value + 1); trialStartedAt.current = performance.now(); }
   }
-  function nextPair() { if (!pairComplete) return; const next = pairTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: Math.round(performance.now() - trialStartedAt.current) } : trial); setPairTrials(next); advance(next, forcedChoiceTrials, sceneMatchingTrials, selectionTrials); }
-  function nextForcedChoice() { if (!currentForcedChoice?.selectedOption) return; const next = forcedChoiceTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: Math.round(performance.now() - trialStartedAt.current) } : trial); setForcedChoiceTrials(next); advance(pairTrials, next, sceneMatchingTrials, selectionTrials); }
-  function nextSceneMatching() { if (!currentSceneMatching?.selectedOption) return; const next = sceneMatchingTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: Math.round(performance.now() - trialStartedAt.current) } : trial); setSceneMatchingTrials(next); advance(pairTrials, forcedChoiceTrials, next, selectionTrials); }
-  function nextSet() { if (!currentSelection) return; const next = selectionTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: Math.round(performance.now() - trialStartedAt.current) } : trial); setSelectionTrials(next); advance(pairTrials, forcedChoiceTrials, sceneMatchingTrials, next); }
-  function previous() { if (!index) return; setIndex((value) => value - 1); setShowHelp(false); setShowCorrectAnswer(false); clearSelectionLimitNotice(); trialStartedAt.current = performance.now(); }
+  function elapsedFor(previousMs?: number) { return (previousMs ?? 0) + Math.round(performance.now() - trialStartedAt.current); }
+  function nextPair() { if (!pairComplete) return; const next = pairTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: elapsedFor(trial.responseTimeMs) } : trial); setPairTrials(next); advance(next, forcedChoiceTrials, sceneMatchingTrials, selectionTrials); }
+  function nextForcedChoice() { if (!currentForcedChoice?.selectedOption) return; const next = forcedChoiceTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: elapsedFor(trial.responseTimeMs) } : trial); setForcedChoiceTrials(next); advance(pairTrials, next, sceneMatchingTrials, selectionTrials); }
+  function nextSceneMatching() { if (!currentSceneMatching?.selectedOption) return; const next = sceneMatchingTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: elapsedFor(trial.responseTimeMs) } : trial); setSceneMatchingTrials(next); advance(pairTrials, forcedChoiceTrials, next, selectionTrials); }
+  function nextSet() { if (!currentSelection) return; const next = selectionTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: elapsedFor(trial.responseTimeMs) } : trial); setSelectionTrials(next); advance(pairTrials, forcedChoiceTrials, sceneMatchingTrials, next); }
+  function previous() {
+    if (!index) return;
+    const elapsed = Math.round(performance.now() - trialStartedAt.current);
+    if (studyType === 'pairJudgment') setPairTrials((trials) => trials.map((trial, i) => i === index ? { ...trial, responseTimeMs: (trial.responseTimeMs ?? 0) + elapsed } : trial));
+    else if (studyType === 'forcedChoice') setForcedChoiceTrials((trials) => trials.map((trial, i) => i === index ? { ...trial, responseTimeMs: (trial.responseTimeMs ?? 0) + elapsed } : trial));
+    else if (studyType === 'sceneMatching') setSceneMatchingTrials((trials) => trials.map((trial, i) => i === index ? { ...trial, responseTimeMs: (trial.responseTimeMs ?? 0) + elapsed } : trial));
+    else if (studyType === 'selection') setSelectionTrials((trials) => trials.map((trial, i) => i === index ? { ...trial, responseTimeMs: (trial.responseTimeMs ?? 0) + elapsed } : trial));
+    setIndex((value) => value - 1); setShowHelp(false); setShowCorrectAnswer(false); clearSelectionLimitNotice(); trialStartedAt.current = performance.now();
+  }
 
   if (stage === 'invalid') return <main className="study-shell complete-shell"><section className="complete-card"><CircleHelp className="submission-error-icon" /><p className="eyebrow">Study access</p><h1>Open a valid study link</h1><p className="lead">Use the preview, testing, or participant link supplied by the study organiser.</p></section></main>;
 
-  if (stage === 'login') return <ParticipantLogin studyTitle={assignedStudyType ? TEST_COPY[assignedStudyType].title : null} onLogin={login} />;
+  if (stage === 'login') return <ParticipantLogin mode={inhouseRoute ? 'inhouse' : 'prolific'} studyTitle={assignedStudyType ? TEST_COPY[assignedStudyType].title : null} onLogin={login} />;
 
-  if (stage === 'inhouse_loading') return <main className="study-shell complete-shell"><section className="complete-card submission-card">{!submissionError ? <><LoaderCircle className="submission-spinner is-spinning" /><p className="eyebrow">In-house study</p><h1>Preparing the study</h1><p className="lead">Please wait while your study session is opened.</p></> : <><CircleHelp className="submission-error-icon" /><p className="eyebrow">In-house study</p><h1>The study could not be opened</h1><p className="lead" role="alert">{submissionError}</p><div className="complete-actions"><Button onClick={() => void enterInhouse()}>Try again</Button></div></>}</section></main>;
+  if (stage === 'resume') return <main className="study-shell complete-shell"><section className="complete-card"><Check className="success-icon" /><p className="eyebrow">Progress recovered</p><h1>Continue your study</h1><p className="lead">Your saved responses were found in this browser. You can continue from trial {resumeIndex + 1}.</p><div className="complete-actions"><Button onClick={() => { setIndex(resumeIndex); trialStartedAt.current = performance.now(); setStage('study'); }}>Continue <ArrowRight /></Button><Button variant="outline" onClick={() => { if (authSession) localStorage.removeItem(progressStorageKey(authSession.sessionId)); setIndex(0); setStage('welcome'); }}>Start again</Button></div></section></main>;
 
-  if (stage === 'welcome') return <main className="study-shell welcome-shell"><section className="welcome-card"><div className="study-mark" aria-hidden="true"><span /><span /><span /></div><div className="tutorial-heading card-title-heading"><h1>Visual Perception Study</h1><p>{inhouse ? 'Complete material appearance study' : assignedStudyType ? `${TEST_COPY[assignedStudyType].title} test` : 'Thank you for taking part in this material appearance study.'}</p></div><div className="attention-callout"><Eye /><div><h2>Please read carefully and stay attentive</h2><p>You will judge surface materials across changes in shape and illumination.</p></div></div><div className="study-facts"><div><strong className="fact-value">{inhouse ? '≈ 30 min' : assignedStudyType === 'forcedChoice' ? '≈ 7 min' : assignedStudyType ? '≈ 8 min' : '≈ 7–8 min'}</strong><span className="fact-label">Estimated completion time</span></div><div><strong className="fact-value">{inhouse ? '4 tasks' : assignedStudyType ? '1 task' : '4 tasks'}</strong><span className="fact-label">{inhouse ? 'Completed one after another' : assignedStudyType ? TEST_COPY[assignedStudyType].title : 'Choose one after the guide'}</span></div><div><Monitor /><span className="fact-label">Desktop or laptop</span></div></div><div className="instructions compact-instructions"><h2>Before you begin</h2><ul><li>Use a desktop or laptop in a normally lit room.</li><li>Set your screen to a comfortable, clearly visible brightness.</li><li>Do not refresh or close the page while completing the study.</li></ul></div><label className="consent-row"><Checkbox checked={consented} onCheckedChange={(checked) => setConsented(checked === true)} /><span>I voluntarily agree to participate. I understand that my responses will be stored under a study identifier and used for academic research. The restricted Prolific linkage is retained only for study administration and data-quality checks.</span></label><Button className="primary-action" size="lg" disabled={!consented} onClick={() => setStage('demographics')}>Continue <ArrowRight /></Button></section></main>;
+  if (stage === 'welcome') return <main className="study-shell welcome-shell"><section className="welcome-card"><div className="study-mark" aria-hidden="true"><span /><span /><span /></div><div className="tutorial-heading card-title-heading"><h1>Visual Perception Study</h1><p>{inhouse ? 'Complete material appearance study' : assignedStudyType ? `${TEST_COPY[assignedStudyType].title} test` : 'Thank you for taking part in this material appearance study.'}</p></div><div className="attention-callout"><Eye /><div><h2>Please read carefully and stay attentive</h2><p>You will judge surface materials across changes in shape and illumination.</p></div></div><div className="study-facts"><div><strong className="fact-value">{inhouse ? '≈ 30 min' : assignedStudyType === 'pairJudgment' ? '≈ 7 min' : assignedStudyType ? '≈ 8 min' : '≈ 7–8 min'}</strong><span className="fact-label">Estimated completion time</span></div><div><strong className="fact-value">{inhouse ? '4 tasks' : assignedStudyType ? '1 task' : '4 tasks'}</strong><span className="fact-label">{inhouse ? 'Completed one after another' : assignedStudyType ? TEST_COPY[assignedStudyType].title : 'Choose one after the guide'}</span></div><div><Monitor /><span className="fact-label">Desktop or laptop</span></div></div><div className="instructions compact-instructions"><h2>Before you begin</h2><ul><li>Use a desktop or laptop in a normally lit room.</li><li>Set your screen to a comfortable, clearly visible brightness.</li><li>Do not refresh or close the page while completing the study.</li></ul></div><label className="consent-row"><Checkbox checked={consented} onCheckedChange={(checked) => { const accepted = checked === true; setConsented(accepted); setConsentedAt(accepted ? new Date().toISOString() : ''); }} /><span>I voluntarily agree to participate. I understand that my responses will be stored under a study identifier and used for academic research. The restricted Prolific linkage is retained only for study administration and data-quality checks.</span></label><Button className="primary-action" size="lg" disabled={!consented} onClick={() => setStage('demographics')}>Continue <ArrowRight /></Button></section></main>;
 
   if (stage === 'demographics') return <main className="study-shell demographics-shell"><section className="welcome-card demographics-card"><div className="tutorial-heading card-title-heading"><h1>Participant information</h1><p>{inhouse ? 'This in-house form collects contact and extended demographic information for internal study administration and analysis.' : 'We collect participant information to support future analyses of the user study results. Responses will be analysed and reported in aggregate, without identifying individual participants. Please do not include your name or other identifying details in free-text answers.'}</p></div><DemographicsForm values={demographics} onChange={setDemographics} inhouse={inhouse} />{demographicsSaveError && <p className="demographics-save-error" role="alert">{demographicsSaveError}</p>}<div className="demographics-actions"><Button variant="ghost" size="lg" disabled={demographicsSaving} onClick={() => setStage('welcome')}><ArrowLeft /> Back</Button><div className="demographics-forward-actions">{testingMode && <Button variant="outline" size="lg" disabled={demographicsSaving} onClick={() => void continueFromDemographics(true)}>Skip for testing</Button>}<Button size="lg" disabled={!demographicsComplete || demographicsSaving} onClick={() => void continueFromDemographics(false)}>{demographicsSaving ? <><LoaderCircle className="is-spinning" /> Saving…</> : <>Continue <ArrowRight /></>}</Button></div></div></section></main>;
 
@@ -956,13 +1049,13 @@ export default function App() {
 
   if (stage === 'instructions' && studyType) return <main className="study-shell tutorial-shell"><header className="page-header"><div><span className="brand-dot" /> {TEST_COPY[studyType].title} test</div><span>{inhouse ? `Test ${inhouseTaskIndex + 1} of ${INHOUSE_STUDY_ORDER.length}` : 'Instructions'}</span></header><section className="tutorial-content task-instructions-content"><div className="tutorial-heading"><h1>{TEST_COPY[studyType].title}</h1><p>{TEST_COPY[studyType].detail}</p></div><div className="selected-test-instructions"><h2>{studyType === 'selection' ? 'Select every matching candidate' : studyType === 'sceneMatching' ? 'Track one material across two scenes' : 'Compare materials, not scenes'}</h2>{studyType === 'forcedChoice' && <p>Select the image (A or B) showing an object made of the same material as the reference image. Please note that the object shape and the illumination may be different across the images. Try to focus on the material</p>}{studyType === 'pairJudgment' && <><p>For every pair, answer all three questions:</p><ol><li>Do A and B have the same underlying material?</li><li>Which surface appears more glossy?</li><li>Which surface appears more metallic?</li></ol><p>Judge the two appearance attributes independently, even if you think the materials are probably the same. Choose “Approximately same” when neither surface appears more glossy or more metallic.</p><p>You will begin with three training examples. You must answer all three questions correctly in each example before continuing.</p></>}{studyType === 'sceneMatching' && <><p>Scene 1 contains one reference object and two contextual probes. Scene 2 contains three numbered candidates and two contextual probes made from the same respective materials as the probes in Scene 1. Find the candidate made of the same material as the reference.</p><p>You will begin with four training examples. These answers are not recorded.</p><ul><li>Only geometry or illumination changes between scenes.</li><li>The lateral probes provide additional information about that change.</li><li>Focus on material identity rather than direct pixel similarity.</li></ul></>}{studyType === 'selection' && <><p>The reference appears on the left and 6 candidates appear in a 2 × 3 grid. One or two candidates may have the same material as the reference.</p><ul><li>Select <u>up to two</u> candidates that appear to match the reference.</li><li>A highlighted border and check mark indicate selection.</li><li>Click a selected image again to deselect it.</li><li>Shape and illumination can differ substantially.</li></ul></>}</div><div className="preload-status">{preparing ? <LoaderCircle className="is-spinning" /> : prepared ? <Check /> : <CircleHelp />}<div><strong>{prepared ? 'Images ready' : preparing ? 'Preparing study images' : 'Study not ready'}</strong><span>{preparing ? 'Please wait while the images are prepared.' : prepared ? 'You can start the test.' : error}</span></div>{error && <Button variant="outline" onClick={() => void prepare(studyType)}>Try again</Button>}</div><div className="explanation-actions">{!(inhouse && inhouseTaskIndex > 0) && <Button variant="ghost" size="lg" onClick={() => setStage(assignedStudyType ? 'explanation' : 'chooser')}><ArrowLeft /> {assignedStudyType ? 'Back to guide' : 'Choose another test'}</Button>}<Button size="lg" disabled={!prepared || preparing} onClick={start}>Start test <ArrowRight /></Button></div></section></main>;
 
-  if (stage === 'submitting') return <main className="study-shell complete-shell"><section className="complete-card submission-card">{!submissionError ? <><LoaderCircle className="submission-spinner is-spinning" /><p className="eyebrow">Saving responses</p><h1>Please wait</h1><p className="lead">{inhouse && inhouseTaskIndex < INHOUSE_STUDY_ORDER.length - 1 ? `We are securely storing test ${inhouseTaskIndex + 1} before loading the next one.` : 'We are securely storing your completed study. Do not close this page.'}</p></> : <><CircleHelp className="submission-error-icon" /><p className="eyebrow">Upload not confirmed</p><h1>Your responses are still safe in this browser</h1><p className="lead" role="alert">{submissionError}</p><p className="submission-help">Please try the upload again first. If it continues to fail, download the CSV backup so your responses are not lost.</p><div className="complete-actions"><Button disabled={!pendingSubmission} onClick={() => pendingSubmission && void uploadSubmission(pendingSubmission)}>Try upload again</Button><Button variant="outline" onClick={downloadFallbackCsv}><Download /> Download results as CSV</Button></div>{finalUploadFallbackAvailable && <div className="fallback-submission-instructions"><p>Email the downloaded CSV to <a href="mailto:s.jimenez@unizar.es?subject=Prolific%20results">s.jimenez@unizar.es</a> with the subject:</p><strong>Prolific results</strong><p>After downloading the file, press Done to continue to the final thank-you screen.</p><Button disabled={!fallbackCsvDownloaded} onClick={() => void finishWithLocalBackup()}>Done</Button>{!fallbackCsvDownloaded && <small>Download the CSV before continuing.</small>}</div>}</>}</section></main>;
+  if (stage === 'submitting') return <main className="study-shell complete-shell"><section className="complete-card submission-card">{!submissionError ? <><LoaderCircle className="submission-spinner is-spinning" /><p className="eyebrow">Saving responses</p><h1>Please wait</h1><p className="lead">{inhouse && inhouseTaskIndex < INHOUSE_STUDY_ORDER.length - 1 ? `We are securely storing test ${inhouseTaskIndex + 1} before loading the next one.` : 'We are securely storing your completed study. Do not close this page.'}</p></> : <><CircleHelp className="submission-error-icon" /><p className="eyebrow">Upload not confirmed</p><h1>Your responses are still safe in this browser</h1><p className="lead" role="alert">{submissionError}</p><p className="submission-help">Keep this page open and try the upload again. You may also download a local backup, but the study will only be marked complete after Cloudflare confirms the full response set.</p><div className="complete-actions"><Button disabled={!pendingSubmission} onClick={() => pendingSubmission && void uploadSubmission(pendingSubmission)}>Try upload again</Button><Button variant="outline" onClick={downloadCurrent}><Download /> Download backup CSV</Button></div></>}</section></main>;
 
   if (stage === 'screening') return <main className="study-shell complete-shell"><section className="complete-card submission-card">{!submissionError ? <><LoaderCircle className="submission-spinner is-spinning" /><p className="eyebrow">Saving responses</p><h1>Please wait</h1><p className="lead">We are recording your responses. Do not close this page.</p></> : <><CircleHelp className="submission-error-icon" /><p className="eyebrow">Upload not confirmed</p><h1>Your responses are still safe in this browser</h1><p className="lead" role="alert">{submissionError}</p><div className="complete-actions"><Button disabled={!pendingScreenOut} onClick={() => pendingScreenOut && void uploadScreenOut(pendingScreenOut)}>Try upload again</Button></div></>}</section></main>;
 
-  if (stage === 'screened_out') return <main className="study-shell complete-shell"><section className="complete-card"><CircleHelp className="submission-error-icon" /><p className="eyebrow">Attention test failed</p><h1>You did not pass the attention test</h1><p className="lead">Your responses did not meet the study’s attention-check requirements, so you cannot continue this test. The responses completed so far have been recorded.</p><ProlificOutcomeOptions url={outcomeUrl} code={outcomeCode} copied={outcomeCodeCopied} onCopy={() => void copyOutcomeCode()} />{redirectError && <p className="lead" role="alert">{redirectError}</p>}{receiptId && <p className="submission-receipt"><span>Screening receipt</span><strong>{receiptId}</strong></p>}</section></main>;
+  if (stage === 'screened_out') return <main className="study-shell complete-shell"><section className="complete-card"><CircleHelp className="submission-error-icon" /><p className="eyebrow">Attention test failed</p><h1>You did not pass the attention test</h1><p className="lead">Your responses did not meet the study’s attention-check requirements, so you cannot continue this test. {resultStorage === 'r2' ? 'The responses completed so far have been secured in the private backup storage because the primary database was unavailable.' : 'The responses completed so far have been recorded.'}</p>{!inhouse && <ProlificOutcomeOptions url={outcomeUrl} code={outcomeCode} copied={outcomeCodeCopied} onCopy={() => void copyOutcomeCode()} />}{redirectError && !inhouse && <p className="lead" role="alert">{redirectError}</p>}{receiptId && <p className="submission-receipt"><span>{resultStorage === 'r2' ? 'Private backup receipt' : 'Screening receipt'}</span><strong>{receiptId}</strong></p>}</section></main>;
 
-  if (stage === 'complete' && studyType) return <main className="study-shell complete-shell"><section className="complete-card"><div className="success-icon"><Check /></div><p className="eyebrow">{inhouse ? 'Study complete' : 'Test complete'}</p><h1>Thank you for taking part</h1><p className="lead">{fallbackCompletion ? 'The automatic upload could not be confirmed, but your responses have been preserved in the CSV backup. Please email that file as instructed.' : inhouse ? 'All four tests have been completed and their responses have been stored successfully.' : directTesting ? 'Testing session complete. A local CSV has been downloaded.' : previewMode ? 'Preview session complete. A local CSV has been downloaded.' : 'Your responses have been uploaded and confirmed successfully.'}</p>{!inhouse && !directTesting && !previewMode && <ProlificOutcomeOptions url={outcomeUrl} code={outcomeCode} copied={outcomeCodeCopied} onCopy={() => void copyOutcomeCode()} />}{redirectError && <p className="lead" role="alert">{redirectError}</p>}{receiptId && !inhouse && <p className="submission-receipt"><span>Confirmation receipt</span><strong>{receiptId}</strong></p>}{activeCount > 0 && !fallbackCompletion && <div className="complete-actions"><Button variant="outline" onClick={downloadCurrent}><Download /> Download a local copy</Button></div>}</section></main>;
+  if (stage === 'complete' && studyType) return <main className="study-shell complete-shell"><section className="complete-card"><div className="success-icon"><Check /></div><p className="eyebrow">{inhouse ? 'Study complete' : 'Test complete'}</p><h1>Thank you for taking part</h1><p className="lead">{inhouse ? 'All four tests have been completed and their responses have been stored successfully.' : directTesting ? 'Testing session complete. A local CSV has been downloaded.' : previewMode ? 'Preview session complete. A local CSV has been downloaded.' : resultStorage === 'r2' ? 'Your responses have been uploaded and confirmed in secure private backup storage because the primary database was temporarily unavailable.' : 'Your responses have been uploaded and confirmed successfully.'}</p>{!inhouse && !directTesting && !previewMode && <ProlificOutcomeOptions url={outcomeUrl} code={outcomeCode} copied={outcomeCodeCopied} onCopy={() => void copyOutcomeCode()} />}{redirectError && <p className="lead" role="alert">{redirectError}</p>}{receiptId && !inhouse && <p className="submission-receipt"><span>{resultStorage === 'r2' ? 'Private backup receipt' : 'Confirmation receipt'}</span><strong>{receiptId}</strong></p>}{activeCount > 0 && <div className="complete-actions"><Button variant="outline" onClick={downloadCurrent}><Download /> Download a local copy</Button></div>}</section></main>;
 
   if (stage === 'training' && studyType === 'pairJudgment') return <PairTraining attempts={pairTrainingAttempts} onAttempt={recordPairTrainingAttempt} onBack={() => setStage('instructions')} onComplete={() => { setIndex(0); trialStartedAt.current = performance.now(); setStage('study'); }} />;
 
@@ -970,7 +1063,6 @@ export default function App() {
     const example = trainingExamples[trainingIndex];
     if (!example) return null;
     const compositeTraining = example.first_scene.length === 1 && example.second_scene.length === 1;
-    const selectedIsCorrect = trainingChoice === example.correct_option;
     const trainingContext = example.shared_factor === 'illumination' ? 'Objects share their geometry while the illumination changes between scenes.' : 'Geometry differs while illumination stays the same.';
     return <main className="study-shell constancy-study-shell scene-matching-study-shell training-study-shell">
       <header className="trial-header"><div><span className="brand-dot" /> {TEST_COPY.sceneMatching.title} test</div><div className="trial-header-actions"><span className="training-badge">Training</span><span>Example {trainingIndex + 1} of {trainingExamples.length}</span></div></header>
@@ -985,13 +1077,13 @@ export default function App() {
           <div className="scene-strip"><div className="scene-strip-label"><strong>Scene 2</strong><span>Choose one</span></div>{example.second_scene.map((image, imageIndex) => { const option = (imageIndex + 1) as 1 | 2 | 3 | 4; return <button key={image.image_id} className="scene-sample scene-option" data-selected={trainingChoice === option || undefined} data-correct={trainingRevealed && example.correct_option === option || undefined} aria-pressed={trainingChoice === option} disabled={trainingRevealed} onClick={() => { setTrainingChoice(option); setTrainingIncorrect(false); }}><img src={studyImageUrl(selectionDisplayPath(image))} alt={`Option ${option}`} /><span>{option}</span>{trainingChoice === option && <span className="candidate-check"><Check /></span>}</button>; })}</div>
         </>}
       </section>
-      <footer className="constancy-actions training-constancy-actions"><Button variant="ghost" onClick={() => { if (trainingIndex === 0) setStage('instructions'); else { setTrainingIndex((value) => value - 1); setTrainingChoice(null); setTrainingRevealed(false); setTrainingIncorrect(false); } }}><ArrowLeft /> Back</Button><div className="training-footer-feedback" aria-live="polite">{trainingRevealed && <div className="training-feedback" role="status"><strong>Correct!</strong> The reference and option {example.correct_option} show the same material, even though {example.shared_factor === 'illumination' ? 'the lighting has changed.' : 'the shape has changed.'}</div>}{trainingIncorrect && <div className="training-feedback training-feedback-error" role="alert">Incorrect. Please reread the instructions and select your answer again.</div>}</div>{trainingRevealed ? <Button onClick={advanceTraining}>{trainingIndex + 1 === trainingExamples.length ? 'Begin test' : 'Next example'} <ArrowRight /></Button> : <Button disabled={trainingChoice === null} onClick={() => { if (selectedIsCorrect) setTrainingRevealed(true); else setTrainingIncorrect(true); }}>Check answer <ArrowRight /></Button>}</footer>
+      <footer className="constancy-actions training-constancy-actions"><Button variant="ghost" onClick={() => { if (trainingIndex === 0) setStage('instructions'); else { setTrainingIndex((value) => value - 1); setTrainingChoice(null); setTrainingRevealed(false); setTrainingIncorrect(false); } }}><ArrowLeft /> Back</Button><div className="training-footer-feedback" aria-live="polite">{trainingRevealed && <div className="training-feedback" role="status"><strong>Correct!</strong> The reference and option {example.correct_option} show the same material, even though {example.shared_factor === 'illumination' ? 'the lighting has changed.' : 'the shape has changed.'}</div>}{trainingIncorrect && <div className="training-feedback training-feedback-error" role="alert">Incorrect. Please reread the instructions and select your answer again.</div>}</div>{trainingRevealed ? <Button onClick={advanceTraining}>{trainingIndex + 1 === trainingExamples.length ? 'Begin test' : 'Next example'} <ArrowRight /></Button> : <Button disabled={trainingChoice === null} onClick={checkSceneTrainingAnswer}>Check answer <ArrowRight /></Button>}</footer>
       {lightboxPath && <button className={`image-lightbox${compositeTraining && lightboxPath === example.second_scene[0]?.image_path ? ' image-lightbox-wide' : ''}`} onClick={() => setLightboxPath('')}><img src={studyImageUrl(lightboxPath)} alt="Enlarged material" /><span>Click to close</span></button>}
     </main>;
   }
   if (stage !== 'study' || !studyType || !activeCount) return null;
   const progress = (index + 1) / activeCount * 100;
-  if (studyType === 'forcedChoice' && currentForcedChoice) return <main className="study-shell constancy-study-shell"><header className="trial-header"><div><span className="brand-dot" /> {TEST_COPY.forcedChoice.title} test</div><div className="trial-header-actions"><span>Trial {index + 1} of {activeCount}</span><TestingAnswerButton visible={directTesting} ready={Boolean(testingGroundTruth)} shown={showCorrectAnswer} onToggle={() => setShowCorrectAnswer((value) => !value)} /></div></header><Progress className="study-progress" value={progress} /><section className="reference-trial-layout"><div className="reference-heading"><h1>Which image shows the same material as the reference?</h1><p>Select the image (A or B) showing an object made of the same material as the reference image. Please note that the object shape and the illumination may be different across the images. Try to focus on the material</p></div><div className="reference-workspace"><figure className="reference-sample"><button onClick={() => setLightboxPath(currentForcedChoice.reference.image_path)}><img src={stimulusUrl(currentForcedChoice.reference.image_path)} alt="Reference material" /></button><figcaption>Reference</figcaption></figure><div className="candidate-grid forced-choice-grid">{currentForcedChoice.options.map((option, optionIndex) => { const label = optionIndex === 0 ? 'A' : 'B'; const selected = currentForcedChoice.selectedOption === label; return <button key={option.image_id} className="candidate-card forced-choice-card" data-selected={selected || undefined} data-correct={showCorrectAnswer && correctForcedChoice === label || undefined} aria-pressed={selected} onClick={() => setForcedChoiceTrials((all) => all.map((trial, i) => i === index ? { ...trial, selectedOption: label } : trial))}><img src={stimulusUrl(option.image_path)} alt={`Option ${label}`} /><span>{label}</span>{selected && <span className="candidate-check"><Check /></span>}</button>; })}</div></div></section><footer className="constancy-actions"><Button variant="ghost" disabled={!index} onClick={previous}><ArrowLeft /> Back</Button><Button disabled={!currentForcedChoice.selectedOption} onClick={nextForcedChoice}>{index === activeCount - 1 ? 'Finish test' : 'Next trial'} <ArrowRight /></Button></footer>{lightboxPath && <button className="image-lightbox" onClick={() => setLightboxPath('')}><img src={stimulusUrl(lightboxPath)} alt="Enlarged reference" /><span>Click to close</span></button>}</main>;
+  if (studyType === 'forcedChoice' && currentForcedChoice) return <main className="study-shell constancy-study-shell"><header className="trial-header"><div><span className="brand-dot" /> {TEST_COPY.forcedChoice.title} test</div><div className="trial-header-actions"><span>Trial {index + 1} of {activeCount}</span><TestingAnswerButton visible={directTesting} ready={Boolean(testingGroundTruth)} shown={showCorrectAnswer} onToggle={() => setShowCorrectAnswer((value) => !value)} /></div></header><Progress className="study-progress" value={progress} /><section className="reference-trial-layout"><div className="reference-heading"><h1>Which image shows the same material as the reference?</h1><p>Select the image (A or B) showing an object made of the same material as the reference image. Please note that the object shape and the illumination may be different across the images. Try to focus on the material.</p></div><div className="reference-workspace"><figure className="reference-sample"><button onClick={() => setLightboxPath(currentForcedChoice.reference.image_path)}><img src={stimulusUrl(currentForcedChoice.reference.image_path)} alt="Reference material" /></button><figcaption>Reference</figcaption></figure><div className="candidate-grid forced-choice-grid">{currentForcedChoice.options.map((option, optionIndex) => { const label = optionIndex === 0 ? 'A' : 'B'; const selected = currentForcedChoice.selectedOption === label; return <button key={option.image_id} className="candidate-card forced-choice-card" data-selected={selected || undefined} data-correct={showCorrectAnswer && correctForcedChoice === label || undefined} aria-pressed={selected} onClick={() => setForcedChoiceTrials((all) => all.map((trial, i) => i === index ? { ...trial, selectedOption: label } : trial))}><img src={stimulusUrl(option.image_path)} alt={`Option ${label}`} /><span>{label}</span>{selected && <span className="candidate-check"><Check /></span>}</button>; })}</div></div></section><footer className="constancy-actions"><Button variant="ghost" disabled={!index} onClick={previous}><ArrowLeft /> Back</Button><Button disabled={!currentForcedChoice.selectedOption} onClick={nextForcedChoice}>{index === activeCount - 1 ? 'Finish test' : 'Next trial'} <ArrowRight /></Button></footer>{lightboxPath && <button className="image-lightbox" onClick={() => setLightboxPath('')}><img src={stimulusUrl(lightboxPath)} alt="Enlarged reference" /><span>Click to close</span></button>}</main>;
 
   if (studyType === 'sceneMatching' && currentSceneMatching) {
     const compositeScene = currentSceneMatching.first_scene.length === 1 && currentSceneMatching.second_scene.length === 1;
