@@ -55,6 +55,7 @@ export default {
     if (!origin) return jsonError('Origin not allowed.', 403);
     try {
       if (request.method === 'POST' && url.pathname === '/api/v1/login') return withCors(await login(request, env, ctx), origin);
+      if (request.method === 'POST' && url.pathname === '/api/v1/anonymous-login') return withCors(await anonymousLogin(request, env), origin);
       if (request.method === 'POST' && url.pathname === '/api/v1/demographics') return withCors(await saveDemographics(request, env), origin);
       if (request.method === 'POST' && url.pathname === '/api/v1/submit') return withCors(await resultWriteWithFallback(request, env, submit, 'completed'), origin);
       if (request.method === 'POST' && url.pathname === '/api/v1/screen-out') return withCors(await resultWriteWithFallback(request, env, screenOut, 'screened_out'), origin);
@@ -138,6 +139,110 @@ async function login(request, env, ctx) {
   const effectiveProlific = isInternalUser
     ? { pid: `internal-${username}`, studyId: 'internal-gilab', sessionId: `internal-${username}` }
     : accessSource === 'prolific' ? suppliedProlific : directMapping;
+  return establishSession({
+    request,
+    env,
+    credential,
+    studyType,
+    sessionId,
+    studyRunId,
+    startedAt,
+    effectiveProlific,
+    accessSource,
+    isInternalUser,
+    isInhouse,
+    clientMetadata: body.clientMetadata,
+    anonymousEntry: false,
+  });
+}
+
+async function anonymousLogin(request, env) {
+  const body = parseJson(await readBody(request, 32_000));
+  const studyType = cleanString(body.studyType, 40);
+  const sessionId = cleanString(body.clientSessionId, 100);
+  const startedAt = isoString(body.startedAt);
+  const prolific = body.prolific && typeof body.prolific === 'object' ? body.prolific : {};
+  const effectiveProlific = {
+    pid: identifier(prolific.prolificPid),
+    studyId: identifier(prolific.studyId),
+    sessionId: identifier(prolific.sessionId),
+  };
+  if (!STUDY_TYPES.has(studyType) || !sessionId || !startedAt || Object.values(effectiveProlific).some((value) => !value)) {
+    return jsonError('Missing or invalid anonymous study information.', 400);
+  }
+
+  const identifierOwner = await anonymousCredentialForIdentifiers(env, effectiveProlific);
+  if (identifierOwner && (identifierOwner.provisioning_mode !== 'anonymous' || identifierOwner.assigned_study_type !== studyType)) {
+    return jsonError('These Prolific identifiers are already assigned to another study access.', 409);
+  }
+
+  if (!identifierOwner) {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO participant_mappings
+         (credential_id, prolific_pid, prolific_study_id, prolific_session_id)
+       SELECT credential.id, ?1, ?2, ?3
+       FROM access_credentials AS credential
+       WHERE credential.provisioning_mode = 'anonymous'
+         AND credential.assigned_study_type = ?4
+         AND credential.active = 1
+         AND NOT EXISTS (
+           SELECT 1 FROM participant_mappings AS mapping
+           WHERE mapping.credential_id = credential.id
+         )
+       ORDER BY credential.anonymous_order ASC
+       LIMIT 1`,
+    ).bind(effectiveProlific.pid, effectiveProlific.studyId, effectiveProlific.sessionId, studyType).run();
+  }
+
+  const credential = await anonymousCredentialForIdentifiers(env, effectiveProlific);
+  if (!credential) {
+    const conflictingOwner = await env.DB.prepare(
+      `SELECT id FROM participant_mappings
+       WHERE prolific_session_id = ?1 OR (prolific_pid = ?2 AND prolific_study_id = ?3)`,
+    ).bind(effectiveProlific.sessionId, effectiveProlific.pid, effectiveProlific.studyId).first();
+    return conflictingOwner
+      ? jsonError('These Prolific identifiers are already linked to another study access.', 409)
+      : jsonError('No anonymous participant slots remain for this test. Please contact the study organiser.', 503);
+  }
+  if (credential.provisioning_mode !== 'anonymous' || credential.assigned_study_type !== studyType) {
+    return jsonError('These Prolific identifiers are already assigned to another study access.', 409);
+  }
+
+  return establishSession({
+    request,
+    env,
+    credential,
+    studyType,
+    sessionId,
+    studyRunId: null,
+    startedAt,
+    effectiveProlific,
+    accessSource: 'prolific',
+    isInternalUser: false,
+    isInhouse: false,
+    clientMetadata: body.clientMetadata,
+    anonymousEntry: true,
+  });
+}
+
+async function anonymousCredentialForIdentifiers(env, prolific) {
+  return env.DB.prepare(
+    `SELECT credential.id, credential.username, credential.assigned_study_type,
+            credential.assignment_seed, credential.active,
+            credential.provisioning_mode, credential.anonymous_order
+     FROM participant_mappings AS mapping
+     JOIN access_credentials AS credential ON credential.id = mapping.credential_id
+     WHERE mapping.prolific_session_id = ?1
+        OR (mapping.prolific_pid = ?2 AND mapping.prolific_study_id = ?3)
+     ORDER BY CASE
+       WHEN mapping.prolific_session_id = ?1
+        AND mapping.prolific_pid = ?2
+        AND mapping.prolific_study_id = ?3 THEN 0 ELSE 1 END
+     LIMIT 1`,
+  ).bind(prolific.sessionId, prolific.pid, prolific.studyId).first();
+}
+
+async function establishSession({ request, env, credential, studyType, sessionId, studyRunId, startedAt, effectiveProlific, accessSource, isInternalUser, isInhouse, clientMetadata, anonymousEntry }) {
   let mapping = await env.DB.prepare(
     `SELECT id, credential_id, prolific_pid, prolific_study_id, prolific_session_id
      FROM participant_mappings WHERE credential_id = ?1`,
@@ -196,8 +301,8 @@ async function login(request, env, ctx) {
   await env.DB.prepare(
     `INSERT INTO study_sessions (
        id, credential_id, participant_mapping_id, study_type, started_at,
-       client_metadata_json, cloudflare_metadata_json, assignment_batch, inhouse, study_run_id, access_source
-     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+       client_metadata_json, cloudflare_metadata_json, assignment_batch, inhouse, study_run_id, access_source, anonymous_entry
+     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
      ON CONFLICT(id) DO UPDATE SET
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
        client_metadata_json = excluded.client_metadata_json,
@@ -206,7 +311,7 @@ async function login(request, env, ctx) {
      WHERE study_sessions.credential_id = excluded.credential_id
        AND study_sessions.participant_mapping_id = excluded.participant_mapping_id
        AND study_sessions.study_type = excluded.study_type`,
-  ).bind(effectiveSessionId, credential.id, mapping.id, studyType, startedAt, JSON.stringify(safeObject(body.clientMetadata)), JSON.stringify(cloudflareMetadata(request)), assignmentBatch, isInhouse ? 1 : 0, studyRunId, accessSource).run();
+  ).bind(effectiveSessionId, credential.id, mapping.id, studyType, startedAt, JSON.stringify(safeObject(clientMetadata)), JSON.stringify(cloudflareMetadata(request)), assignmentBatch, isInhouse ? 1 : 0, studyRunId, accessSource, anonymousEntry ? 1 : 0).run();
   const session = await env.DB.prepare('SELECT id, credential_id, study_type, status, receipt_id, assignment_batch, inhouse, study_run_id, screened_out, screen_out_receipt_id, sentinel_failures FROM study_sessions WHERE id = ?1').bind(effectiveSessionId).first();
   if (!session || session.credential_id !== credential.id || session.study_type !== studyType || (isInhouse && session.study_run_id !== studyRunId)) return jsonError('This browser session cannot be resumed with these credentials.', 409);
 
@@ -220,7 +325,7 @@ async function login(request, env, ctx) {
     exp: Math.floor(Date.now() / 1000) + tokenTtl(env),
   }, env.SESSION_SIGNING_SECRET);
   const effectiveSeed = isInhouse ? `batch:${session.assignment_batch}:${studyType}:gilab-inhouse` : credential.assignment_seed;
-  return json({ ok: true, token, sessionId: effectiveSessionId, studyType, assignmentSeed: effectiveSeed, assignmentBatch: session.assignment_batch, inhouse: session.inhouse === 1, studyRunId: session.study_run_id, accessSource, alreadyCompleted: session.status === 'completed', receiptId: session.receipt_id ?? null, screenedOut: session.screened_out === 1, screenOutReceiptId: session.screen_out_receipt_id ?? null, sentinelFailures: Number(session.sentinel_failures ?? 0) });
+  return json({ ok: true, token, sessionId: effectiveSessionId, studyType, assignmentSeed: effectiveSeed, assignmentBatch: session.assignment_batch, inhouse: session.inhouse === 1, studyRunId: session.study_run_id, accessSource, anonymousEntry, alreadyCompleted: session.status === 'completed', receiptId: session.receipt_id ?? null, screenedOut: session.screened_out === 1, screenOutReceiptId: session.screen_out_receipt_id ?? null, sentinelFailures: Number(session.sentinel_failures ?? 0) });
 }
 
 function isDirectParticipantMapping(mapping, credentialId) {

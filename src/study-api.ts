@@ -47,6 +47,7 @@ export type AuthenticatedStudySession = {
   screenedOut: boolean;
   screenOutReceiptId?: string | null;
   sentinelFailures?: number;
+  anonymousEntry?: boolean;
 };
 
 export type SubmissionTrial = {
@@ -159,6 +160,16 @@ export async function loginToStudy(input: {
   clientMetadata: ClientMetadata;
 }): Promise<AuthenticatedStudySession> {
   return apiRequest('/api/v1/login', input);
+}
+
+export async function loginAnonymouslyToStudy(input: {
+  prolific: ProlificIdentifiers;
+  studyType: string;
+  clientSessionId: string;
+  startedAt: string;
+  clientMetadata: ClientMetadata;
+}): Promise<AuthenticatedStudySession> {
+  return apiRequest('/api/v1/anonymous-login', input);
 }
 
 export type StudyStorageResult = {

@@ -8,12 +8,12 @@ import { DemographicsForm, EMPTY_DEMOGRAPHICS, demographicColumns, demographicsC
 import { PairTraining } from './PairTraining';
 import { PAIR_TRAINING_EXAMPLES, type PairTrainingAttempt } from './pairTrainingData';
 import { ParticipantLogin } from './ParticipantLogin';
-import { collectClientMetadata, loginToStudy, readProlificIdentifiers, saveStudyDemographics, screenOutStudy, submitStudy, type AuthenticatedStudySession, type StudyScreenOut, type StudySubmission, type SubmissionTrial } from './study-api';
+import { collectClientMetadata, loginAnonymouslyToStudy, loginToStudy, readProlificIdentifiers, saveStudyDemographics, screenOutStudy, submitStudy, type AuthenticatedStudySession, type StudyScreenOut, type StudySubmission, type SubmissionTrial } from './study-api';
 
 const ASSET_BASE = import.meta.env.BASE_URL;
 const SELECTION_DISPLAY_COUNT = 6;
 const MAX_SELECTIONS = 2;
-type Stage = 'invalid' | 'login' | 'welcome' | 'resume' | 'demographics' | 'explanation' | 'chooser' | 'instructions' | 'training' | 'study' | 'submitting' | 'screening' | 'screened_out' | 'complete';
+type Stage = 'invalid' | 'login' | 'authenticating' | 'welcome' | 'resume' | 'demographics' | 'explanation' | 'chooser' | 'instructions' | 'training' | 'study' | 'submitting' | 'screening' | 'screened_out' | 'complete';
 type StudyType = 'forcedChoice' | 'pairJudgment' | 'sceneMatching' | 'selection';
 type InhouseCredentials = { username: string; password: string; runId: string };
 type RelativeChoice = 'a' | 'same' | 'b' | '';
@@ -133,6 +133,10 @@ function directStudyType(): StudyType | null {
 function isTestingRoute() { return location.pathname.replace(/\/+$/, '').endsWith('/testing'); }
 function isPreviewRoute() { return location.pathname.replace(/\/+$/, '').endsWith('/preview'); }
 function isInhouseRoute() { return location.pathname.replace(/\/+$/, '').endsWith('/inhouse'); }
+function isAnonymousRoute() {
+  const segments = location.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
+  return segments.length >= 2 && segments[segments.length - 2] === 'anon' && directStudyType() !== null;
+}
 function isLocalDevelopmentHost() { return ['localhost', '127.0.0.1', '::1'].includes(location.hostname); }
 const REMOTE_TESTING_HOSTS = new Set([
   'investigation-rocket-however-territory.trycloudflare.com',
@@ -560,13 +564,13 @@ function CompositeSceneFigure({ image, labels, selectedOption, correctOption, sh
 }
 
 export default function App() {
-  const directTesting = isTestingMode(); const previewMode = isPreviewRoute(); const inhouseRoute = isInhouseRoute(); const assignedStudyType = inhouseRoute ? 'pairJudgment' : directStudyType();
+  const directTesting = isTestingMode(); const previewMode = isPreviewRoute(); const inhouseRoute = isInhouseRoute(); const anonymousRoute = isAnonymousRoute(); const assignedStudyType = inhouseRoute ? 'pairJudgment' : directStudyType();
   const prolific = useMemo(readProlificIdentifiers, []);
   const prolificIdentifierCount = Object.values(prolific).filter(Boolean).length;
   const participantLinkValid = !assignedStudyType || inhouseRoute || prolificIdentifierCount === 3;
   const initialClientMetadata = useMemo(collectClientMetadata, []);
   const metadata = useMemo(() => readSessionMetadata(prolific.prolificPid), [prolific.prolificPid]);
-  const [stage, setStage] = useState<Stage>(directTesting ? 'chooser' : previewMode ? 'welcome' : assignedStudyType && participantLinkValid ? 'login' : 'invalid'); const [studyType, setStudyType] = useState<StudyType | null>(assignedStudyType);
+  const [stage, setStage] = useState<Stage>(directTesting ? 'chooser' : previewMode ? 'welcome' : assignedStudyType && participantLinkValid ? anonymousRoute ? 'authenticating' : 'login' : 'invalid'); const [studyType, setStudyType] = useState<StudyType | null>(assignedStudyType);
   const [authSession, setAuthSession] = useState<AuthenticatedStudySession | null>(null);
   const inhouseCredentials = useRef<InhouseCredentials | null>(null);
   const [pendingSubmission, setPendingSubmission] = useState<StudySubmission | null>(null);
@@ -591,7 +595,8 @@ export default function App() {
   const originalStartedAt = useRef(metadata.startedAt);
   const restoredSessionId = useRef('');
   const [testingGroundTruth, setTestingGroundTruth] = useState<TestingGroundTruth | null>(null); const [showCorrectAnswer, setShowCorrectAnswer] = useState(false);
-  const preparationId = useRef(0); const automaticPreparationStarted = useRef(false);
+  const preparationId = useRef(0); const automaticPreparationStarted = useRef(false); const anonymousLoginStarted = useRef(false);
+  const [anonymousLoginError, setAnonymousLoginError] = useState('');
   const advancingTrialRef = useRef(false);
   const testingMode = isTestingMode();
   const inhouse = authSession?.inhouse === true;
@@ -612,6 +617,11 @@ export default function App() {
       button.setAttribute('aria-label', 'Information about material, glossiness and metallicness');
     });
   }, [stage, index, trainingIndex]);
+  useEffect(() => {
+    if (!anonymousRoute || !assignedStudyType || !participantLinkValid || stage !== 'authenticating' || anonymousLoginStarted.current) return;
+    anonymousLoginStarted.current = true;
+    void loginAnonymously();
+  }, [anonymousRoute, assignedStudyType, participantLinkValid, stage]);
   useEffect(() => {
     // Keep the original asset URL out of the browser's ordinary image context
     // menu. This is deliberately a usability deterrent rather than a security
@@ -804,6 +814,28 @@ export default function App() {
       completed.push(type);
     }
     return { authenticated: null, type: null, completed, lastAuthenticated };
+  }
+  async function loginAnonymously() {
+    if (!assignedStudyType) return;
+    setAnonymousLoginError('');
+    try {
+      const authenticated = await loginAnonymouslyToStudy({ prolific, studyType: assignedStudyType, clientSessionId: metadata.sessionId, startedAt: metadata.startedAt, clientMetadata: initialClientMetadata });
+      setAuthSession(authenticated);
+      if (authenticated.screenedOut) {
+        setStage('screening');
+        await showOutcomeScreen(assignedStudyType, 'screen_out');
+        return;
+      }
+      if (authenticated.alreadyCompleted) {
+        if (!authenticated.receiptId) throw new Error('The study is already complete, but its receipt could not be loaded. Please contact the study organiser.');
+        setStage('submitting');
+        await showOutcomeScreen(assignedStudyType, 'completion');
+        return;
+      }
+      setStage('welcome');
+    } catch (cause) {
+      setAnonymousLoginError(cause instanceof Error ? cause.message : 'The participant assignment could not be prepared.');
+    }
   }
   async function login(username: string, password: string) {
     if (!assignedStudyType) throw new Error('This link does not identify a study task.');
@@ -1092,6 +1124,8 @@ export default function App() {
   }
 
   if (advancingTrial && stage === 'study') return <main className="study-shell complete-shell" aria-busy="true"><section className="complete-card submission-card"><LoaderCircle className="submission-spinner is-spinning" /><p className="eyebrow">Loading images</p><h1>Preparing the next trial</h1><p className="lead">Please wait a moment.</p></section></main>;
+
+  if (stage === 'authenticating') return <main className="study-shell complete-shell" aria-busy={!anonymousLoginError}><section className="complete-card submission-card">{anonymousLoginError ? <><CircleHelp className="submission-error-icon" /><p className="eyebrow">Study access</p><h1>Participant assignment unavailable</h1><p className="lead" role="alert">{anonymousLoginError}</p><Button onClick={() => { anonymousLoginStarted.current = true; setAnonymousLoginError(''); void loginAnonymously(); }}>Try again</Button></> : <><LoaderCircle className="submission-spinner is-spinning" /><p className="eyebrow">Study access</p><h1>Preparing your participant assignment</h1><p className="lead">Please wait a moment.</p></>}</section></main>;
 
   if (stage === 'invalid') return <main className="study-shell complete-shell"><section className="complete-card"><CircleHelp className="submission-error-icon" /><p className="eyebrow">Study access</p><h1>Open a valid study link</h1><p className="lead">Use the preview, testing, or participant link supplied by the study organiser.</p></section></main>;
 

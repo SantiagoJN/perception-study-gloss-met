@@ -46,7 +46,29 @@ def main() -> None:
             page.call("Runtime.enable")
             page.call("Page.enable")
             page.call("Page.addScriptToEvaluateOnNewDocument", {
-                "source": "delete Array.prototype.at; try { Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true }); } catch (_) {}",
+                "source": """
+                    delete Array.prototype.at;
+                    try { Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true }); } catch (_) {}
+                    const originalFetch = globalThis.fetch.bind(globalThis);
+                    globalThis.fetch = async (input, init) => {
+                      if (String(input).includes('/api/v1/anonymous-login')) {
+                        const request = JSON.parse(String(init?.body || '{}'));
+                        return new Response(JSON.stringify({
+                          ok: true,
+                          token: 'anonymous-route-test-token',
+                          sessionId: `anonymous-${request.studyType}`,
+                          studyType: request.studyType,
+                          assignmentSeed: `batch:set_01:anon:${request.studyType}`,
+                          assignmentBatch: 'set_01',
+                          inhouse: false,
+                          anonymousEntry: true,
+                          alreadyCompleted: false,
+                          screenedOut: false,
+                        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                      }
+                      return originalFetch(input, init);
+                    };
+                """,
             })
 
             for route in ROUTES:
@@ -56,6 +78,16 @@ def main() -> None:
                     page.navigate(f"{base}/{suffix}?{query}")
                     page.wait("document.querySelector('h1')?.textContent.includes('Participant access')")
                     assert page.evaluate("document.querySelectorAll('.participant-login-form input').length === 1")
+                    exceptions = [event for event in page.events if event.get("method") == "Runtime.exceptionThrown"]
+                    assert not exceptions, f"Runtime exception on /{suffix}: {exceptions[-1]}"
+
+            for route in ROUTES:
+                for suffix in (f"anon/{route}", f"anon/{route}/"):
+                    page.events.clear()
+                    query = f"PROLIFIC_PID=anon-{route}&STUDY_ID=anon-study-{route}&SESSION_ID=anon-session-{route}"
+                    page.navigate(f"{base}/{suffix}?{query}")
+                    page.wait("document.querySelector('h1')?.textContent.includes('Visual Perception Study')")
+                    assert page.evaluate("document.querySelectorAll('.participant-login-form input').length === 0")
                     exceptions = [event for event in page.events if event.get("method") == "Runtime.exceptionThrown"]
                     assert not exceptions, f"Runtime exception on /{suffix}: {exceptions[-1]}"
 
@@ -70,7 +102,7 @@ def main() -> None:
             else:
                 raise AssertionError("The study server exposed a file outside dist")
 
-            print("Direct-route E2E passed: four Prolific routes with/without trailing slash, approved testing route, legacy browser fallback, and path containment.")
+            print("Direct-route E2E passed: credential and anonymous Prolific routes with/without trailing slash, approved testing route, legacy browser fallback, and path containment.")
         finally:
             if page is not None:
                 page.close()

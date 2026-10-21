@@ -8,12 +8,16 @@
       content="A visual perception study of glossiness and metallicness."
     />
     <script>
-      // Keep assets rooted at the study when a direct test URL has a trailing slash.
+      // Keep assets rooted at the study for direct and nested anonymous routes.
       const routeParts = location.pathname.replace(/\/+$/, '').split('/');
       const route = routeParts[routeParts.length - 1];
       if (['preview', 'testing', 'inhouse', 'test1_pair_comparison', 'test2_2afc', 'test3_matching', 'test4_mm'].includes(route)) {
         const base = document.createElement('base');
-        base.href = new URL(location.pathname.endsWith('/') ? '../' : './', location.href).href;
+        const anonymousRoute = routeParts[routeParts.length - 2] === 'anon';
+        const relativeBase = anonymousRoute
+          ? (location.pathname.endsWith('/') ? '../../' : '../')
+          : (location.pathname.endsWith('/') ? '../' : './');
+        base.href = new URL(relativeBase, location.href).href;
         document.head.appendChild(base);
       }
     </script>
