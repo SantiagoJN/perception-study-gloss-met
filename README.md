@@ -10,7 +10,8 @@ task links first validate the Prolific URL identifiers plus a generated username
 and password through `perception-study-api`. That Worker is the only public writer
 to the EU D1 database `perception-study-results`; the browser never receives D1
 credentials. The final screen is shown only after D1 confirms the complete set of
-trial rows and returns a receipt. `/testing` stays local-only and downloads a CSV.
+trial rows and returns a receipt. `/testing` is enabled only on localhost, the
+approved development tunnel, and the GitHub Pages host; it downloads a CSV.
 
 The root URL shows consent, demographics, the glossiness/metallicness guide, and
 a chooser for one independent task:
@@ -142,11 +143,18 @@ Multiple matching and in-context matching preload their 384 px grid
 thumbnails; full-resolution zoom images still load when opened.
 
 The root route no longer enters the study. The unrestricted chooser is available
-only at `/preview`; `/testing` remains available for interface checks. The direct
+only at `/preview`; `/testing` remains available for interface checks on the
+explicitly approved development and GitHub Pages hosts. The direct
 links do not expose testing controls or correct answers. The current flow, CSV fields, task
 banks, and entry points are recorded in `supabase_seeds/manifest.json` under
 `current_study`; the original top-level keys describe the previous Supabase
 seed generation.
+
+Because `/testing` is explicitly enabled on GitHub Pages, its separate
+`testing_ground_truth.json` answer map is intentionally public. Participant
+routes never load or display it, and regular manifests are still stripped of
+correct-answer fields and sensitive image metadata before deployment. Do not
+share the `/testing` URL with study participants.
 
 The submission client has the public Worker endpoint compiled as a safe default:
 `https://perception-study-api.bunnysantiago.workers.dev`. `public/config.js` may

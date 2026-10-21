@@ -134,7 +134,12 @@ function isTestingRoute() { return location.pathname.replace(/\/+$/, '').endsWit
 function isPreviewRoute() { return location.pathname.replace(/\/+$/, '').endsWith('/preview'); }
 function isInhouseRoute() { return location.pathname.replace(/\/+$/, '').endsWith('/inhouse'); }
 function isLocalDevelopmentHost() { return ['localhost', '127.0.0.1', '::1'].includes(location.hostname); }
-function isTestingMode() { return isLocalDevelopmentHost() && (isTestingRoute() || new URLSearchParams(location.search).get('testing') === '1'); }
+const REMOTE_TESTING_HOSTS = new Set([
+  'investigation-rocket-however-territory.trycloudflare.com',
+  'santiagojn.github.io',
+]);
+function isTestingHost() { return isLocalDevelopmentHost() || REMOTE_TESTING_HOSTS.has(location.hostname); }
+function isTestingMode() { return isTestingHost() && (isTestingRoute() || new URLSearchParams(location.search).get('testing') === '1'); }
 function trialCount(type: StudyType) {
   if (isPreviewRoute()) return 50;
   if (!isTestingMode()) return 50;

@@ -138,8 +138,10 @@ private browser before opening the Prolific study.
 The Pages workflow is intentionally fail-closed: it runs lint, Worker tests,
 manifest/config validators and both browser E2E suites, then sanitizes and
 validates the exact artifact. It refuses to publish if `STIMULUS_BASE_URL` is
-missing, uses `r2.dev`, exposes Supabase configuration or retains regular-trial
-answer fields.
+missing, uses `r2.dev`, exposes Supabase configuration or retains answer fields
+inside participant manifests. The separate `/testing` answer map is published
+intentionally so that the approved GitHub Pages testing route can display its
+answer overlays; do not distribute that route to participants.
 
 ## 4. Cloudflare capacity before recruitment
 

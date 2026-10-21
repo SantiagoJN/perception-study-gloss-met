@@ -71,7 +71,7 @@ def main() -> None:
             else:
                 raise AssertionError("The study server exposed a file outside dist")
 
-            print("Direct-route E2E passed: four Prolific routes with/without trailing slash, local-only testing route, legacy browser fallback, and path containment.")
+            print("Direct-route E2E passed: four Prolific routes with/without trailing slash, approved testing route, legacy browser fallback, and path containment.")
         finally:
             if page is not None:
                 page.close()

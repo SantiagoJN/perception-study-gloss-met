@@ -39,7 +39,9 @@ def main() -> None:
     assert "supabase" not in lowered, "Legacy Supabase configuration is public"
     assert "r2.dev" not in lowered, "Production artifact still uses r2.dev"
     assert re.search(r"stimulusBaseUrl[^\n]+https://", config), "Production stimulus URL is missing"
-    assert not (root / "testing_ground_truth.json").exists(), "Testing answer key is public"
+    testing_answers = json.loads((root / "testing_ground_truth.json").read_text(encoding="utf-8"))
+    assert set(testing_answers) == {"pairs", "forced_choices", "scene_matches", "selections"}
+    assert all(len(answers) == 600 for answers in testing_answers.values()), "Incomplete public testing answers"
 
     for trial in trials(root, "forced_choice_trials.json"):
         assert "correct_option" not in trial
@@ -63,7 +65,7 @@ def main() -> None:
             assert "difficulty_score" not in candidate
             assert_clean_image(candidate, trial["trial_id"])
 
-    print("Sanitized deployment valid: no public answer keys, image metadata, Supabase config, or r2.dev origin.")
+    print("Sanitized deployment valid: no participant-manifest answers, image metadata, Supabase config, or r2.dev origin; the public /testing answer map is complete.")
 
 
 if __name__ == "__main__":

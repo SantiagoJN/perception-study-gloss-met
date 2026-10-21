@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Remove answer keys from the static participant-facing deployment."""
+"""Remove sensitive fields from participant manifests before deployment.
+
+The separate testing answer map remains public intentionally because the
+GitHub Pages deployment exposes the explicitly approved ``/testing`` route.
+"""
 
 from __future__ import annotations
 
@@ -68,10 +72,6 @@ def main() -> None:
             candidate.pop("difficulty_score", None)
             strip_image_metadata(candidate)
     write(selection_path, selection_payload)
-
-    ground_truth = root / "testing_ground_truth.json"
-    if ground_truth.exists():
-        ground_truth.unlink()
 
     print(f"Sanitized participant artifacts in {root}")
 
