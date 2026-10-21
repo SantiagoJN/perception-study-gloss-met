@@ -3,6 +3,7 @@
 Web application for studying glossiness and metallicness constancy across
 changes in object geometry and illumination.
 
+<!-- 
 ## Current production architecture
 
 GitHub Pages serves the static study and Cloudflare R2 serves the stimuli. Direct
@@ -441,4 +442,4 @@ aliases, so filenames do not reveal which reference candidate is correct.
 Follow [DEPLOYMENT.md](DEPLOYMENT.md). The GitHub workflow reads the repository
 variable `STIMULUS_BASE_URL` and rejects missing values or `r2.dev` development
 URLs. Responses are sent only to the configured Cloudflare Worker+D1 backend;
-the active frontend no longer publishes Supabase configuration.
+the active frontend no longer publishes Supabase configuration. -->
