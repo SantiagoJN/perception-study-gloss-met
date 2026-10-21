@@ -578,7 +578,6 @@ export default function App() {
   const [outcomeUrl, setOutcomeUrl] = useState('');
   const [outcomeCode, setOutcomeCode] = useState('');
   const [outcomeCodeCopied, setOutcomeCodeCopied] = useState(false);
-  const [receiptId, setReceiptId] = useState('');
   const [resultStorage, setResultStorage] = useState<'d1' | 'r2' | ''>('');
   const [resumeIndex, setResumeIndex] = useState(0);
   const [consented, setConsented] = useState(false); const [consentedAt, setConsentedAt] = useState(''); const [demographics, setDemographics] = useState(EMPTY_DEMOGRAPHICS); const [demographicsSkipped, setDemographicsSkipped] = useState(directTesting);
@@ -813,13 +812,11 @@ export default function App() {
       if (!next.authenticated || !next.type) {
         setAuthSession(next.lastAuthenticated);
         setStudyType(INHOUSE_STUDY_ORDER[INHOUSE_STUDY_ORDER.length - 1]);
-        setReceiptId('All four tests stored');
         setStage('complete');
         return;
       }
       setStudyType(next.type);
       setAuthSession(next.authenticated);
-      setReceiptId(next.authenticated.screenOutReceiptId ?? '');
       if (next.authenticated.screenedOut) {
         setStage('screening');
         await showOutcomeScreen(next.type, 'screen_out');
@@ -829,14 +826,12 @@ export default function App() {
     const authenticated = await loginToStudy({ username, password, prolific, studyType: assignedStudyType, clientSessionId: metadata.sessionId, startedAt: metadata.startedAt, clientMetadata: initialClientMetadata });
     setAuthSession(authenticated);
     if (authenticated.screenedOut) {
-      setReceiptId(authenticated.screenOutReceiptId ?? '');
       setStage('screening');
       await showOutcomeScreen(assignedStudyType, 'screen_out');
       return;
     }
     if (authenticated.alreadyCompleted) {
       if (!authenticated.receiptId) throw new Error('The study is already complete, but its receipt could not be loaded. Please contact the study organiser.');
-      setReceiptId(authenticated.receiptId);
       setStage('submitting');
       await showOutcomeScreen(assignedStudyType, 'completion');
       return;
@@ -962,7 +957,6 @@ export default function App() {
     setSubmissionError('');
     try {
       const result = await submitStudy(submittedSession.token, submission);
-      setReceiptId(result.receiptId);
       setResultStorage(result.storage ?? (result.fallbackStored ? 'r2' : 'd1'));
       localStorage.removeItem(progressStorageKey(submittedSession.sessionId));
       if (result.screenedOut) {
@@ -1004,7 +998,6 @@ export default function App() {
     setSubmissionError('');
     try {
       const result = await screenOutStudy(authSession.token, submission);
-      setReceiptId(result.receiptId);
       setResultStorage(result.storage ?? (result.fallbackStored ? 'r2' : 'd1'));
       localStorage.removeItem(progressStorageKey(authSession.sessionId));
       setPendingScreenOut(null);
@@ -1093,7 +1086,7 @@ export default function App() {
 
   if (stage === 'screening') return <main className="study-shell complete-shell"><section className="complete-card submission-card">{!submissionError ? <><LoaderCircle className="submission-spinner is-spinning" /><p className="eyebrow">Saving responses</p><h1>Please wait</h1><p className="lead">We are recording your responses. Do not close this page.</p></> : <><CircleHelp className="submission-error-icon" /><p className="eyebrow">Upload not confirmed</p><h1>Your responses are still safe in this browser</h1><p className="lead" role="alert">{submissionError}</p><div className="complete-actions"><Button disabled={!pendingScreenOut} onClick={() => pendingScreenOut && void uploadScreenOut(pendingScreenOut)}>Try upload again</Button></div></>}</section></main>;
 
-  if (stage === 'screened_out') return <main className="study-shell complete-shell"><section className="complete-card"><CircleHelp className="submission-error-icon" /><p className="eyebrow">Attention test failed</p><h1>You did not pass the attention test</h1><p className="lead">Your responses did not meet the study’s attention-check requirements, so you cannot continue this test. {resultStorage === 'r2' ? 'The responses completed so far have been secured in the private backup storage because the primary database was unavailable.' : 'The responses completed so far have been recorded.'}</p>{!inhouse && <ProlificOutcomeOptions url={outcomeUrl} code={outcomeCode} copied={outcomeCodeCopied} onCopy={() => void copyOutcomeCode()} />}{redirectError && !inhouse && <p className="lead" role="alert">{redirectError}</p>}{receiptId && <p className="submission-receipt"><span>{resultStorage === 'r2' ? 'Private backup receipt' : 'Screening receipt'}</span><strong>{receiptId}</strong></p>}</section></main>;
+  if (stage === 'screened_out') return <main className="study-shell complete-shell"><section className="complete-card"><CircleHelp className="submission-error-icon" /><p className="eyebrow">Attention test failed</p><h1>You did not pass the attention test</h1><p className="lead">Your responses did not meet the study’s attention-check requirements, so you cannot continue this test. {resultStorage === 'r2' ? 'The responses completed so far have been secured in the private backup storage because the primary database was unavailable.' : 'The responses completed so far have been recorded.'}</p>{!inhouse && <ProlificOutcomeOptions url={outcomeUrl} code={outcomeCode} copied={outcomeCodeCopied} onCopy={() => void copyOutcomeCode()} />}{redirectError && !inhouse && <p className="lead" role="alert">{redirectError}</p>}</section></main>;
 
   if (stage === 'complete' && studyType) return <main className="study-shell complete-shell"><section className="complete-card"><div className="success-icon"><Check /></div><p className="eyebrow">{inhouse ? 'Study complete' : 'Test complete'}</p><h1>Thank you for taking part</h1><p className="lead">{inhouse ? 'All four tests have been completed and their responses have been stored successfully.' : directTesting ? 'Testing session complete. A local CSV has been downloaded.' : previewMode ? 'Preview session complete. A local CSV has been downloaded.' : resultStorage === 'r2' ? 'Your responses have been uploaded and confirmed in secure private backup storage because the primary database was temporarily unavailable.' : 'Your responses have been uploaded and confirmed successfully.'}</p>{!inhouse && !directTesting && !previewMode && <ProlificOutcomeOptions url={outcomeUrl} code={outcomeCode} copied={outcomeCodeCopied} onCopy={() => void copyOutcomeCode()} />}{redirectError && <p className="lead" role="alert">{redirectError}</p>}</section></main>;
 

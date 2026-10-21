@@ -152,6 +152,8 @@ def run_checks(page: ChromePage, base_url: str) -> None:
         page.click_text("button", "Next trial")
     page.wait("document.querySelector('h1')?.textContent.includes('You did not pass the attention test')")
     assert page.evaluate("document.body.innerText.includes('CQP8FXQQ')"), "Preview screen-out did not load the configured code"
+    assert not page.evaluate("document.body.innerText.includes('Screening receipt')"), "Screen-out exposed the internal screening receipt"
+    assert not page.evaluate("document.body.innerText.includes('Private backup receipt')"), "Screen-out exposed an internal fallback receipt"
     page.evaluate("localStorage.clear()")
 
     production_url = f"{base_url}test4_mm/?PROLIFIC_PID=e2e-participant&STUDY_ID=e2e-study&SESSION_ID=e2e-session"
