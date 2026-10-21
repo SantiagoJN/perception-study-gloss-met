@@ -38,6 +38,19 @@ def resolve_image(relative: str) -> Path:
     return PUBLIC / relative
 
 
+def resolve_thumbnail(relative: str) -> tuple[Path, tuple[int, int]] | None:
+    suffix = Path(relative).with_suffix(".webp").name
+    if relative.startswith("datasetv9/renders/"):
+        return ROOT / "datasetv9/thumbnails" / suffix, (512, 512)
+    if relative.startswith("datasetv9/groups4/renders3/"):
+        expected = (768, 256) if "_reference_" in relative else (1152, 256)
+        return ROOT / "datasetv9/groups4/thumbnails" / suffix, expected
+    if relative.startswith("datasetv9/groups4/sentinels/"):
+        expected = (768, 256) if "[reference]" in relative else (1152, 256)
+        return ROOT / "datasetv9/groups4/sentinels_thumbnails" / suffix, expected
+    return None
+
+
 def assert_unique(items: Iterable[str], label: str) -> None:
     values = list(items)
     assert len(values) == len(set(values)), f"Duplicate {label}"
@@ -191,6 +204,7 @@ def main() -> None:
         image_paths.update(candidate["image_path"] for candidate in item["candidates"])
 
     dimensions = Counter()
+    thumbnail_dimensions = Counter()
     if not args.skip_local_assets:
         for relative in sorted(image_paths):
             path = resolve_image(relative)
@@ -198,6 +212,17 @@ def main() -> None:
             with Image.open(path) as image:
                 dimensions[image.size] += 1
                 image.verify()
+            thumbnail = resolve_thumbnail(relative)
+            if thumbnail is not None:
+                thumbnail_path, expected_size = thumbnail
+                assert thumbnail_path.is_file(), f"Missing thumbnail: {relative} -> {thumbnail_path}"
+                with Image.open(thumbnail_path) as image:
+                    assert image.size == expected_size, (
+                        f"Unexpected thumbnail dimensions for {thumbnail_path}: "
+                        f"{image.size} != {expected_size}"
+                    )
+                    thumbnail_dimensions[image.size] += 1
+                    image.verify()
 
     print(json.dumps({
         "pairs": len(pairs),
@@ -208,6 +233,7 @@ def main() -> None:
         "unique_image_references": len(image_paths),
         "local_images_verified": not args.skip_local_assets,
         "image_dimensions": {f"{width}x{height}": count for (width, height), count in dimensions.items()},
+        "thumbnail_dimensions": {f"{width}x{height}": count for (width, height), count in thumbnail_dimensions.items()},
         "selection_positive_counts": dict(sorted(selection_positives.items())),
         "sentinel_positions": sentinels["positions"],
         "sentinels_per_test": {

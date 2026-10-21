@@ -78,6 +78,12 @@ class StudyHandler(SimpleHTTPRequestHandler):
                 relative = request_path[len(render_prefix):]
                 candidate = (render_root / relative).resolve()
                 return candidate if contained(candidate, render_root.resolve()) else None
+        thumbnail_prefix = "/datasetv9/thumbnails/"
+        if request_path.startswith(thumbnail_prefix):
+            thumbnail_root = (ROOT / "datasetv9/thumbnails").resolve()
+            relative = request_path[len(thumbnail_prefix):]
+            candidate = (thumbnail_root / relative).resolve()
+            return candidate if contained(candidate, thumbnail_root) else None
         groups4_prefix = "/datasetv9/groups4/"
         if request_path.startswith(groups4_prefix):
             groups4_root = (ROOT / "datasetv9/groups4").resolve()

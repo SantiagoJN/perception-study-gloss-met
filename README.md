@@ -135,13 +135,29 @@ Each direct link first requests the username supplied through Prolific, then
 starts consent, demographics, the appearance guide and that task's instruction
 screen. The participant enters only the username; the generated Prolific files
 repeat it as the password for import compatibility. Its session trials are selected on
-page load and all trial display images preload throughout the introduction.
-The guide shows loading progress and only allows the participant to continue
-once every selected trial image has loaded. The instruction screen then opens
-with **Start test** available; if a download fails, the guide offers
-**Try again**.
-Multiple matching and in-context matching preload their 384 px grid
-thumbnails; full-resolution zoom images still load when opened.
+page load. The first trial is preloaded before the task starts, then the current
+and next two trials are preloaded while the participant advances. All four
+tests use lossless WebP thumbnails in their normal layouts: square material
+renders are 512 x 512, while the Test 3 reference and question composites are
+768 x 256 and 1152 x 256 respectively. Opening the zoom view still loads the
+original full-resolution PNG. If a thumbnail is temporarily absent from R2,
+the browser falls back to its original PNG instead of blocking the study.
+
+Generate the complete thumbnail set from the external dataset checkout with:
+
+```bash
+python3 scripts/generate_datasetv9_thumbnails.py
+```
+
+The generated directories (not committed to this frontend repository) are:
+
+- `../datasetv9/thumbnails/` (8100 square renders);
+- `../datasetv9/groups4/thumbnails/` (1200 Test 3 composites from `renders3`);
+- `../datasetv9/groups4/sentinels_thumbnails/` (10 Test 3 sentinel composites).
+
+Upload them to R2 under those same object prefixes before publishing the
+frontend. Re-running the command is incremental; use `--force` only when every
+thumbnail must be rebuilt.
 
 The root route no longer enters the study. The unrestricted chooser is available
 only at `/preview`; `/testing` remains available for interface checks on the
@@ -255,14 +271,14 @@ trial 1. The first uses low-gloss, low-metallic SVBRDFs from G90, G91, G92 and
 G94 on spheres under two illuminations; the second uses the same materials
 under fixed illumination with `bumpiness_1` above and `ridges_0` below.
 Training answers are explained immediately and are not written to the CSV.
-Rebuild these examples and their 384 px WebP thumbnails with
+Rebuild these examples with
 `python3 scripts/generate_scene_matching_training.py` when the private name
 mapping and datasetv7 renders are available.
 
 Scored-trial manifests contain opaque image names and no correctness labels. Private
 ground truth and provenance are stored under
-`stimulus_generation/new_tasks_v1/`. The four-material grid uses cached 384 px
-WebP thumbnails from `public/scene_matching_thumbnails/`.
+`stimulus_generation/new_tasks_v1/`. Current scored composites use the external
+`datasetv9/groups4/thumbnails/` directory described above.
 
 ### Generate the 18-candidate selection sets
 
@@ -300,11 +316,11 @@ change-type substitutions are retained in the private audit table and counted
 in provenance. The automatic difficulty values remain unvalidated mining
 heuristics.
 
-The generator also caches 384 px WebP thumbnails. Before starting the selection
-task the browser loads only the first three trials, then progressively preloads
-the current and next two trials with three retries per image. The original
-1024 px PNG is requested only for the zoom view, avoiding the previous ~450 MB
-up-front download.
+The current frontend uses the shared 512 px WebP files in
+`datasetv9/thumbnails/`. Before starting the selection task the browser loads
+only the first trial, then progressively preloads the current and next two
+trials with three retries per image. The original 1024 px PNG is requested only
+for the zoom view.
 
 Outputs:
 
@@ -316,7 +332,8 @@ Outputs:
   counts;
 - `stimulus_generation/selection_v1/provenance.json`: full configuration,
   source hashes and output hash.
-- `public/selection_thumbnails/*.webp`: cached grid/reference thumbnails.
+- `../datasetv9/thumbnails/*.webp`: shared grid/reference thumbnails generated
+  by `generate_datasetv9_thumbnails.py`.
 
 ### Audit the Test #4 setups
 
