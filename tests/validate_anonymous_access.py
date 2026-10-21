@@ -46,6 +46,51 @@ def build_database() -> sqlite3.Connection:
     return database
 
 
+def validate_screened_out_status_migration() -> None:
+    database = sqlite3.connect(":memory:")
+    migrations = sorted(MIGRATIONS.glob("*.sql"))
+    for migration in migrations[:-1]:
+        database.executescript(migration.read_text(encoding="utf-8"))
+    database.execute(
+        """INSERT INTO access_credentials
+           (username, password_hash, password_salt, password_iterations,
+            assigned_study_type, assignment_seed)
+           VALUES ('migration-user', 'AA==', 'AA==', 100000,
+                   'forcedChoice', 'batch:set_01:migration-user')"""
+    )
+    credential_id = database.execute("SELECT id FROM access_credentials").fetchone()[0]
+    database.execute(
+        """INSERT INTO participant_mappings
+           (credential_id, prolific_pid, prolific_study_id, prolific_session_id)
+           VALUES (?, 'migration-pid', 'migration-study', 'migration-session')""",
+        (credential_id,),
+    )
+    mapping_id = database.execute("SELECT id FROM participant_mappings").fetchone()[0]
+    database.execute(
+        """INSERT INTO study_sessions
+           (id, credential_id, participant_mapping_id, study_type, status,
+            started_at, client_metadata_json, cloudflare_metadata_json,
+            screened_out, screened_out_at, screen_out_reason, final_outcome)
+           VALUES ('screened-session', ?, ?, 'forcedChoice', 'in_progress',
+                   '2026-10-21T12:00:00.000Z', '{}', '{}', 1,
+                   '2026-10-21T12:05:00.000Z', 'sentinel_failures', 'screened_out')""",
+        (credential_id, mapping_id),
+    )
+    database.execute(
+        """INSERT INTO trial_responses
+           (session_id, trial_number, trial_id, response_time_ms, response_json)
+           VALUES ('screened-session', 1, 'sentinel-trial', 1000, '{}')"""
+    )
+    database.executescript(migrations[-1].read_text(encoding="utf-8"))
+    assert database.execute(
+        "SELECT status FROM study_sessions WHERE id = 'screened-session'"
+    ).fetchone()[0] == "screened_out"
+    assert database.execute(
+        "SELECT count(*) FROM trial_responses WHERE session_id = 'screened-session'"
+    ).fetchone()[0] == 1
+    assert database.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 def allocate(database: sqlite3.Connection, participant: str) -> str:
     identifiers = (f"pid-{participant}", "study-test1", f"session-{participant}")
     existing = database.execute(
@@ -85,13 +130,14 @@ def validate_private_pool() -> None:
 
 
 def main() -> None:
+    validate_screened_out_status_migration()
     database = build_database()
     batches = [allocate(database, name) for name in ("one", "two", "three")]
     assert batches == ["set_01", "set_02", "set_03"]
     assert allocate(database, "one") == "set_01"
     assert database.execute("SELECT count(DISTINCT credential_id) FROM participant_mappings").fetchone()[0] == 3
     validate_private_pool()
-    print("Anonymous access valid: stable allocation, unique credentials, and round-robin batches.")
+    print("Study database valid: screened-out status migration preserves responses; anonymous allocation remains stable and round-robin.")
 
 
 if __name__ == "__main__":

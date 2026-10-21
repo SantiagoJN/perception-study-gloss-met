@@ -626,7 +626,7 @@ async function persistScreenOut(env, session, body, normalized, screening, scree
   const statements = trialStatements(env, sessionId, normalized);
   statements.push(env.DB.prepare(
     `UPDATE study_sessions SET
-       status = 'in_progress', schema_version = ?2, final_outcome = 'screened_out',
+       status = 'screened_out', schema_version = ?2, final_outcome = 'screened_out',
        screened_out = 1, screened_out_at = ?3,
        sentinel_failures = ?4, sentinels_evaluated = ?5,
        sentinel_checks_evaluated = ?6,
@@ -639,9 +639,9 @@ async function persistScreenOut(env, session, body, normalized, screening, scree
   ).bind(sessionId, schemaVersion, screenedOutAt, screening.failures, screening.sentinels, screening.checks, receiptId, body.demographicsSkipped === true ? 1 : 0, JSON.stringify(normalizeDemographics(body.demographics, session.inhouse === 1)), JSON.stringify(Array.isArray(body.trainingAttempts) ? body.trainingAttempts : []), JSON.stringify(safeObject(body.clientMetadata)), normalized.length));
   await env.DB.batch(statements);
   const stored = await env.DB.prepare(
-    'SELECT screened_out, sentinel_failures, sentinels_evaluated, sentinel_checks_evaluated, response_count, screen_out_receipt_id FROM study_sessions WHERE id = ?1',
+    'SELECT status, screened_out, sentinel_failures, sentinels_evaluated, sentinel_checks_evaluated, response_count, screen_out_receipt_id FROM study_sessions WHERE id = ?1',
   ).bind(sessionId).first();
-  if (stored?.screened_out !== 1 || Number(stored.sentinel_failures) !== screening.failures || Number(stored.response_count) !== normalized.length || stored.screen_out_receipt_id !== receiptId) {
+  if (stored?.status !== 'screened_out' || stored.screened_out !== 1 || Number(stored.sentinel_failures) !== screening.failures || Number(stored.response_count) !== normalized.length || stored.screen_out_receipt_id !== receiptId) {
     return jsonError('The database did not confirm the screen-out record. Please retry.', 503);
   }
   return json({ ok: true, receiptId, sentinelFailures: screening.failures, sentinelsEvaluated: screening.sentinels, sentinelChecksEvaluated: screening.checks, alreadyStored: false, screenedOut: true, fallbackStored: false, storage: 'd1' });
