@@ -303,6 +303,9 @@ def run_checks(page: ChromePage, base_url: str) -> None:
     page.evaluate("document.querySelector('.composite-scene-label:not(:disabled)').click()")
     page.wait("[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Finish test')&&!b.disabled)")
     page.click_text("button", "Finish test")
+    page.wait("document.querySelector('h1')?.textContent.includes('Thank you for taking part')")
+    assert not page.evaluate("document.body.innerText.includes('Download a local copy')"), "Completion screen exposed the removed local-download action"
+    assert not page.evaluate("document.body.innerText.includes('Confirmation receipt')"), "Completion screen exposed the internal submission receipt"
     session = page.evaluate("JSON.parse(Object.values(localStorage).find(v=>{try{return JSON.parse(v).studyType==='sceneMatching'}catch{return false}}))")
     assert not any(trial.get("isSentinel") for trial in session["sceneMatchingTrials"]), "Sentinels leaked into /testing Test 3"
     assert {trial.get("assignmentSet") for trial in session["sceneMatchingTrials"]} == {"set_01"}
