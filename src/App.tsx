@@ -180,7 +180,7 @@ function thumbnailPath(path: string) {
 function ThumbnailImage({ path, originalPath = path, alt }: { path: string; originalPath?: string; alt: string }) {
   const thumbnail = studyImageUrl(thumbnailPath(path));
   const original = studyImageUrl(originalPath);
-  return <img src={thumbnail} alt={alt} onError={(event) => {
+  return <img key={thumbnail} src={thumbnail} alt={alt} onError={(event) => {
     if (event.currentTarget.src === original) return;
     event.currentTarget.onerror = null;
     event.currentTarget.src = original;
@@ -586,11 +586,13 @@ export default function App() {
   const [sceneTrainingAttempts, setSceneTrainingAttempts] = useState<SceneTrainingAttempt[]>([]);
   const [trainingExamples, setTrainingExamples] = useState<SceneMatchingTrainingExample[]>([]); const [trainingIndex, setTrainingIndex] = useState(0); const [trainingChoice, setTrainingChoice] = useState<1 | 2 | 3 | 4 | null>(null); const [trainingRevealed, setTrainingRevealed] = useState(false); const [trainingIncorrect, setTrainingIncorrect] = useState(false);
   const [preparing, setPreparing] = useState(false); const [prepared, setPrepared] = useState(false); const [error, setError] = useState('');
+  const [advancingTrial, setAdvancingTrial] = useState(false);
   const [showHelp, setShowHelp] = useState(false); const [lightboxPath, setLightboxPath] = useState(''); const [selectionLimitNotice, setSelectionLimitNotice] = useState(false); const trialStartedAt = useRef(0); const selectionLimitTimer = useRef<number | null>(null);
   const originalStartedAt = useRef(metadata.startedAt);
   const restoredSessionId = useRef('');
   const [testingGroundTruth, setTestingGroundTruth] = useState<TestingGroundTruth | null>(null); const [showCorrectAnswer, setShowCorrectAnswer] = useState(false);
   const preparationId = useRef(0); const automaticPreparationStarted = useRef(false);
+  const advancingTrialRef = useRef(false);
   const testingMode = isTestingMode();
   const inhouse = authSession?.inhouse === true;
   const assignedBatch = authSession?.assignmentBatch ?? '';
@@ -1006,8 +1008,25 @@ export default function App() {
       setSubmissionError(cause instanceof Error ? cause.message : 'The screen-out record could not be uploaded. Please try again.');
     }
   }
-  function advance(nextPairs: PairTrial[], nextForced: ForcedChoiceTrial[], nextScene: SceneMatchingTrial[], nextSets: SelectionTrial[]) {
-    persistProgress(Math.min(index + 1, Math.max(0, activeCount - 1)), nextPairs, nextForced, nextScene, nextSets); setShowHelp(false); setShowCorrectAnswer(false); clearSelectionLimitNotice();
+  function displayPathsForTrial(type: StudyType, trialIndex: number, nextPairs: PairTrial[], nextForced: ForcedChoiceTrial[], nextScene: SceneMatchingTrial[], nextSets: SelectionTrial[]) {
+    if (type === 'pairJudgment') {
+      const trial = nextPairs[trialIndex];
+      return trial ? [trial.displayPathA, trial.displayPathB] : [];
+    }
+    if (type === 'forcedChoice') {
+      const trial = nextForced[trialIndex];
+      return trial ? [trial.reference.image_path, ...trial.options.map((option) => option.image_path)] : [];
+    }
+    if (type === 'sceneMatching') {
+      const trial = nextScene[trialIndex];
+      return trial ? [...trial.first_scene, ...trial.second_scene].map(selectionDisplayPath) : [];
+    }
+    const trial = nextSets[trialIndex];
+    return trial ? [selectionDisplayPath(trial.reference), ...trial.candidates.map(selectionDisplayPath)] : [];
+  }
+  async function advance(nextPairs: PairTrial[], nextForced: ForcedChoiceTrial[], nextScene: SceneMatchingTrial[], nextSets: SelectionTrial[]) {
+    if (advancingTrialRef.current) return;
+    persistProgress(index, nextPairs, nextForced, nextScene, nextSets); setShowHelp(false); setShowCorrectAnswer(false); clearSelectionLimitNotice();
     if (studyType && !directTesting && !previewMode) {
       const answeredTrials = submissionTrials(studyType, nextPairs, nextForced, nextScene, nextSets).slice(0, index + 1);
       if (!inhouse && sentinelFailureCount(studyType, answeredTrials) >= sentinelScreenOutThreshold(studyType)) {
@@ -1041,15 +1060,29 @@ export default function App() {
       setStage('submitting');
       void uploadSubmission(submission);
     }
-    else { setIndex((value) => value + 1); trialStartedAt.current = performance.now(); }
+    else if (studyType) {
+      advancingTrialRef.current = true;
+      setAdvancingTrial(true);
+      try {
+        await preloadStudyImages(displayPathsForTrial(studyType, index + 1, nextPairs, nextForced, nextScene, nextSets));
+        persistProgress(index + 1, nextPairs, nextForced, nextScene, nextSets);
+        setIndex((value) => value + 1);
+        trialStartedAt.current = performance.now();
+      } catch (cause) {
+        console.warn('The next trial images could not be loaded. The participant remains on the current trial.', cause);
+      } finally {
+        advancingTrialRef.current = false;
+        setAdvancingTrial(false);
+      }
+    }
   }
   function elapsedFor(previousMs?: number) { return (previousMs ?? 0) + Math.round(performance.now() - trialStartedAt.current); }
-  function nextPair() { if (!pairComplete) return; const next = pairTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: elapsedFor(trial.responseTimeMs) } : trial); setPairTrials(next); advance(next, forcedChoiceTrials, sceneMatchingTrials, selectionTrials); }
-  function nextForcedChoice() { if (!currentForcedChoice?.selectedOption) return; const next = forcedChoiceTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: elapsedFor(trial.responseTimeMs) } : trial); setForcedChoiceTrials(next); advance(pairTrials, next, sceneMatchingTrials, selectionTrials); }
-  function nextSceneMatching() { if (!currentSceneMatching?.selectedOption) return; const next = sceneMatchingTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: elapsedFor(trial.responseTimeMs) } : trial); setSceneMatchingTrials(next); advance(pairTrials, forcedChoiceTrials, next, selectionTrials); }
-  function nextSet() { if (!currentSelection) return; const next = selectionTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: elapsedFor(trial.responseTimeMs) } : trial); setSelectionTrials(next); advance(pairTrials, forcedChoiceTrials, sceneMatchingTrials, next); }
+  function nextPair() { if (!pairComplete || advancingTrialRef.current) return; const next = pairTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: elapsedFor(trial.responseTimeMs) } : trial); setPairTrials(next); void advance(next, forcedChoiceTrials, sceneMatchingTrials, selectionTrials); }
+  function nextForcedChoice() { if (!currentForcedChoice?.selectedOption || advancingTrialRef.current) return; const next = forcedChoiceTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: elapsedFor(trial.responseTimeMs) } : trial); setForcedChoiceTrials(next); void advance(pairTrials, next, sceneMatchingTrials, selectionTrials); }
+  function nextSceneMatching() { if (!currentSceneMatching?.selectedOption || advancingTrialRef.current) return; const next = sceneMatchingTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: elapsedFor(trial.responseTimeMs) } : trial); setSceneMatchingTrials(next); void advance(pairTrials, forcedChoiceTrials, next, selectionTrials); }
+  function nextSet() { if (!currentSelection || advancingTrialRef.current) return; const next = selectionTrials.map((trial, i) => i === index ? { ...trial, responseTimeMs: elapsedFor(trial.responseTimeMs) } : trial); setSelectionTrials(next); void advance(pairTrials, forcedChoiceTrials, sceneMatchingTrials, next); }
   function previous() {
-    if (!index) return;
+    if (!index || advancingTrialRef.current) return;
     const elapsed = Math.round(performance.now() - trialStartedAt.current);
     if (studyType === 'pairJudgment') setPairTrials((trials) => trials.map((trial, i) => i === index ? { ...trial, responseTimeMs: (trial.responseTimeMs ?? 0) + elapsed } : trial));
     else if (studyType === 'forcedChoice') setForcedChoiceTrials((trials) => trials.map((trial, i) => i === index ? { ...trial, responseTimeMs: (trial.responseTimeMs ?? 0) + elapsed } : trial));
@@ -1057,6 +1090,8 @@ export default function App() {
     else if (studyType === 'selection') setSelectionTrials((trials) => trials.map((trial, i) => i === index ? { ...trial, responseTimeMs: (trial.responseTimeMs ?? 0) + elapsed } : trial));
     setIndex((value) => value - 1); setShowHelp(false); setShowCorrectAnswer(false); clearSelectionLimitNotice(); trialStartedAt.current = performance.now();
   }
+
+  if (advancingTrial && stage === 'study') return <main className="study-shell complete-shell" aria-busy="true"><section className="complete-card submission-card"><LoaderCircle className="submission-spinner is-spinning" /><p className="eyebrow">Loading images</p><h1>Preparing the next trial</h1><p className="lead">Please wait a moment.</p></section></main>;
 
   if (stage === 'invalid') return <main className="study-shell complete-shell"><section className="complete-card"><CircleHelp className="submission-error-icon" /><p className="eyebrow">Study access</p><h1>Open a valid study link</h1><p className="lead">Use the preview, testing, or participant link supplied by the study organiser.</p></section></main>;
 

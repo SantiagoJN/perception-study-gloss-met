@@ -230,9 +230,14 @@ def run_checks(page: ChromePage, base_url: str) -> None:
     page.wait("document.querySelectorAll('.forced-choice-card').length === 2")
     assert_trial_fits(page, "Test 2")
     assert page.evaluate("(() => { const r=document.querySelector('.reference-sample').getBoundingClientRect(); const o=[...document.querySelectorAll('.forced-choice-card')].map(el=>el.getBoundingClientRect()); return o[0].right <= r.left && r.right <= o[1].left && Math.abs(r.width-o[0].width)<1 && Math.abs(r.width-o[1].width)<1; })()"), "Reference must be centered between equally sized A/B alternatives"
+    page.evaluate("""(() => { const descriptor=Object.getOwnPropertyDescriptor(HTMLImageElement.prototype,'src'); window.__delayStudyImages=true; Object.defineProperty(HTMLImageElement.prototype,'src',{configurable:true,get:descriptor.get,set(value){if(window.__delayStudyImages)setTimeout(()=>descriptor.set.call(this,value),400);else descriptor.set.call(this,value);}}); })()""")
     page.evaluate("document.querySelector('.forced-choice-card').click()")
     page.wait("[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Next trial')&&!b.disabled)")
     page.click_text("button", "Next trial")
+    page.wait("document.querySelector('[aria-busy=true] h1')?.textContent.includes('Preparing the next trial')")
+    assert page.evaluate("document.querySelector('.trial-header-actions') === null"), "The old trial remained visible while the next images were loading"
+    page.evaluate("window.__delayStudyImages=false")
+    page.wait("document.querySelectorAll('.forced-choice-card').length === 2 && !document.querySelector('[aria-busy=true]')")
     session = page.evaluate("JSON.parse(Object.values(localStorage).find(v=>{try{return JSON.parse(v).studyType==='forcedChoice'}catch{return false}}))")
     assert not any(trial.get("isSentinel") for trial in session["forcedChoiceTrials"]), "Sentinels leaked into /testing Test 2"
     assert {trial.get("assignmentSet") for trial in session["forcedChoiceTrials"]} == {"set_01"}
