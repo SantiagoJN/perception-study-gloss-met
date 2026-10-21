@@ -20,12 +20,18 @@ import websocket
 PROJECT = Path(__file__).resolve().parents[1]
 
 
-def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
+def free_ports(count: int) -> list[int]:
+    """Allocate distinct ephemeral ports while all reservation sockets are open."""
+    sockets: list[socket.socket] = []
+    try:
+        for _ in range(count):
+            sock = socket.socket()
+            sock.bind(("127.0.0.1", 0))
+            sockets.append(sock)
+        return [int(sock.getsockname()[1]) for sock in sockets]
+    finally:
+        for sock in sockets:
+            sock.close()
 def wait_http(url: str, timeout: float = 15.0) -> bytes:
     deadline = time.monotonic() + timeout
     failure: Exception | None = None
@@ -337,8 +343,7 @@ def run_checks(page: ChromePage, base_url: str) -> None:
 def main() -> None:
     if not (PROJECT / "dist/index.html").is_file():
         raise SystemExit("Build the study before running E2E tests: npm run build")
-    server_port = free_port()
-    debug_port = free_port()
+    server_port, debug_port = free_ports(2)
     with tempfile.TemporaryDirectory(prefix="material-study-chrome-") as profile:
         server = subprocess.Popen(
             ["python3", "server.py", "--host", "127.0.0.1", "--port", str(server_port)],

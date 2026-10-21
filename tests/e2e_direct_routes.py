@@ -10,15 +10,14 @@ import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from e2e_study import ChromePage, PROJECT, free_port, wait_http
+from e2e_study import ChromePage, PROJECT, free_ports, wait_http
 
 
 ROUTES = ("test1_pair_comparison", "test2_2afc", "test3_matching", "test4_mm")
 
 
 def main() -> None:
-    server_port = free_port()
-    debug_port = free_port()
+    server_port, debug_port = free_ports(2)
     with tempfile.TemporaryDirectory(prefix="material-study-routes-") as profile:
         server = subprocess.Popen(
             ["python3", "server.py", "--host", "127.0.0.1", "--port", str(server_port)],

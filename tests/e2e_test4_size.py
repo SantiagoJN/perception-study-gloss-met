@@ -8,11 +8,11 @@ import subprocess
 import tempfile
 from urllib.request import Request, urlopen
 
-from e2e_study import ChromePage, free_port, wait_http
+from e2e_study import ChromePage, free_ports, wait_http
 
 
 def main() -> None:
-    server_port, debug_port = free_port(), free_port()
+    server_port, debug_port = free_ports(2)
     with tempfile.TemporaryDirectory(prefix="test4-size-chrome-") as profile:
         server = subprocess.Popen(
             ["python3", "server.py", "--host", "127.0.0.1", "--port", str(server_port)],
