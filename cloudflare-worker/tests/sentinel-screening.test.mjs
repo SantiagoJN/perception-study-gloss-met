@@ -7,31 +7,42 @@ function trial(sentinelId, response) {
   return { sentinelId, response };
 }
 
-test('a Test 1 sentinel contributes one failure if any component is wrong', () => {
+test('a Test 1 sentinel evaluates only its configured components', () => {
   const correct = trial('SENTINEL_T1_01', {
     sameMaterialLikelihood: 1,
-    canonicalGlossChoice: -1,
-    canonicalMetalChoice: 0,
+    canonicalGlossChoice: 1,
+    canonicalMetalChoice: -1,
   });
   assert.deepEqual(evaluateSentinels('pairJudgment', [correct]), {
     sentinels: 1,
-    checks: 3,
+    checks: 2,
     failures: 0,
   });
 
   const oneWrong = trial('SENTINEL_T1_01', {
     sameMaterialLikelihood: 5,
-    canonicalGlossChoice: -1,
-    canonicalMetalChoice: 0,
+    canonicalGlossChoice: 1,
+    canonicalMetalChoice: -1,
   });
   assert.equal(evaluateSentinels('pairJudgment', [oneWrong]).failures, 1);
 
   const allWrong = trial('SENTINEL_T1_01', {
     sameMaterialLikelihood: 5,
-    canonicalGlossChoice: 1,
+    canonicalGlossChoice: -1,
     canonicalMetalChoice: 1,
   });
   assert.equal(evaluateSentinels('pairJudgment', [allWrong]).failures, 1);
+
+  const ignoredGloss = trial('SENTINEL_T1_04', {
+    sameMaterialLikelihood: 1,
+    canonicalGlossChoice: 1,
+    canonicalMetalChoice: -1,
+  });
+  assert.deepEqual(evaluateSentinels('pairJudgment', [ignoredGloss]), {
+    sentinels: 1,
+    checks: 2,
+    failures: 0,
+  });
 });
 
 test('a Test 4 sentinel contributes one failure even when several candidate decisions are wrong', () => {

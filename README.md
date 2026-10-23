@@ -60,10 +60,12 @@ also stored with every D1 response. Sentinels are never inserted in
 `stimulus_generation/sentinels/config.json`; publish and validate it with
 `python3 scripts/publish_sentinel_trials.py`.
 
-A sentinel is failed when any of its component responses is incorrect. Test 1
-checks material identity, glossiness and metallicness; Tests 2 and 3 check their
-single forced choice; Test 4 checks the selected/not-selected state of all six
-candidates. Tests 1–3 are screened out immediately after the second failed
+A sentinel is failed when any of its evaluated component responses is incorrect.
+Test 1 always checks material identity and checks the configured appearance
+attribute(s); unevaluated glossiness or metallicness responses are still stored but
+do not affect screening. Tests 2 and 3 check their single forced choice; Test 4
+checks the selected/not-selected state of all six candidates. Tests 1–3 are
+screened out immediately after the second failed
 sentinel. Test 4 permits two failed sentinels and screens out after the third.
 The browser stops presenting trials, and the Worker independently
 re-evaluates the submitted sentinel responses before recording the partial

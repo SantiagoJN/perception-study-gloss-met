@@ -8,10 +8,10 @@ export function sentinelScreenOutThreshold(studyType) {
 }
 const SENTINEL_COUNT = 5;
 const PAIR_SENTINEL_ANSWERS = new Map([
-  ['SENTINEL_T1_01', { sameMaterialLikelihood: 1, canonicalGlossChoice: -1, canonicalMetalChoice: 0 }],
+  ['SENTINEL_T1_01', { sameMaterialLikelihood: 1, canonicalGlossChoice: 1 }],
   ['SENTINEL_T1_02', { sameMaterialLikelihood: 1, canonicalGlossChoice: -1, canonicalMetalChoice: -1 }],
   ['SENTINEL_T1_03', { sameMaterialLikelihood: 5, canonicalGlossChoice: 0, canonicalMetalChoice: 0 }],
-  ['SENTINEL_T1_04', { sameMaterialLikelihood: 1, canonicalGlossChoice: 1, canonicalMetalChoice: -1 }],
+  ['SENTINEL_T1_04', { sameMaterialLikelihood: 1, canonicalMetalChoice: -1 }],
   ['SENTINEL_T1_05', { sameMaterialLikelihood: 5, canonicalGlossChoice: 0, canonicalMetalChoice: 0 }],
 ]);
 const FORCED_SENTINEL_ANSWERS = new Map([
@@ -693,12 +693,8 @@ function sentinelScore(studyType, trial) {
   const response = trial.response;
   if (studyType === 'pairJudgment') {
     const expected = PAIR_SENTINEL_ANSWERS.get(trial.sentinelId);
-    const failed = [
-      Number(response.sameMaterialLikelihood) !== expected.sameMaterialLikelihood,
-      Number(response.canonicalGlossChoice) !== expected.canonicalGlossChoice,
-      Number(response.canonicalMetalChoice) !== expected.canonicalMetalChoice,
-    ].some(Boolean);
-    return { checks: 3, failures: Number(failed) };
+    const checks = Object.entries(expected).map(([field, value]) => Number(response[field]) !== value);
+    return { checks: checks.length, failures: Number(checks.some(Boolean)) };
   }
   if (studyType === 'forcedChoice') {
     return { checks: 1, failures: Number(response.selectedOption !== FORCED_SENTINEL_ANSWERS.get(trial.sentinelId)) };

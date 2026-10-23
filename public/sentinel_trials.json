@@ -15,8 +15,8 @@
     "test1": [
       {
         "sentinel_id": "SENTINEL_T1_01",
-        "image_a": "datasetv9/renders/[christmas_photo_studio][sphere][G10][20_gloss_high_metallicness_low][Misc__js_paper_stylized_pi_ata_001].png",
-        "image_b": "datasetv9/renders/[christmas_photo_studio][sphere][G10][00_gloss_low_metallicness_low][Misc__js_paper_stylized_pi_ata_001].png",
+        "image_a": "datasetv9/renders/[machine_shop][bumpiness_0][G04][00_gloss_low_metallicness_low][Metal__acg_painted_metal_003].png",
+        "image_b": "datasetv9/renders/[machine_shop][bumpiness_0][G04][21_gloss_high_metallicness_medium][Metal__acg_painted_metal_003].png",
         "physical_relation": "different_material"
       },
       {
@@ -33,8 +33,8 @@
       },
       {
         "sentinel_id": "SENTINEL_T1_04",
-        "image_a": "datasetv9/renders/[chinese_garden][bumpiness_0][G00][02_gloss_low_metallicness_high][Metal__1242_metal_base].png",
-        "image_b": "datasetv9/renders/[chinese_garden][bumpiness_0][G00][20_gloss_high_metallicness_low][Metal__1242_metal_base].png",
+        "image_a": "datasetv9/renders/[machine_shop][ridges_0][G01][22_gloss_high_metallicness_high][Metal__1622_metal_steel_parkerized].png",
+        "image_b": "datasetv9/renders/[machine_shop][ridges_0][G01][10_gloss_medium_metallicness_low][Metal__1622_metal_steel_parkerized].png",
         "physical_relation": "different_material"
       },
       {

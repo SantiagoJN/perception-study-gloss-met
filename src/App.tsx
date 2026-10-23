@@ -86,11 +86,12 @@ const REDIRECT_TEST_KEYS: Record<StudyType, string> = { pairJudgment: 'test1', f
 function sentinelScreenOutThreshold(type: StudyType) {
   return type === 'selection' ? 3 : 2;
 }
-const PAIR_SENTINEL_ANSWERS = new Map<string, { sameMaterialLikelihood: number; canonicalGlossChoice: number; canonicalMetalChoice: number }>([
-  ['SENTINEL_T1_01', { sameMaterialLikelihood: 1, canonicalGlossChoice: -1, canonicalMetalChoice: 0 }],
+type PairSentinelAnswer = { sameMaterialLikelihood?: number; canonicalGlossChoice?: number; canonicalMetalChoice?: number };
+const PAIR_SENTINEL_ANSWERS = new Map<string, PairSentinelAnswer>([
+  ['SENTINEL_T1_01', { sameMaterialLikelihood: 1, canonicalGlossChoice: 1 }],
   ['SENTINEL_T1_02', { sameMaterialLikelihood: 1, canonicalGlossChoice: -1, canonicalMetalChoice: -1 }],
   ['SENTINEL_T1_03', { sameMaterialLikelihood: 5, canonicalGlossChoice: 0, canonicalMetalChoice: 0 }],
-  ['SENTINEL_T1_04', { sameMaterialLikelihood: 1, canonicalGlossChoice: 1, canonicalMetalChoice: -1 }],
+  ['SENTINEL_T1_04', { sameMaterialLikelihood: 1, canonicalMetalChoice: -1 }],
   ['SENTINEL_T1_05', { sameMaterialLikelihood: 5, canonicalGlossChoice: 0, canonicalMetalChoice: 0 }],
 ]);
 const FORCED_SENTINEL_ANSWERS = new Map<string, 'A' | 'B'>([
@@ -506,9 +507,9 @@ function sentinelFailed(type: StudyType, trial: SubmissionTrial) {
     const expected = PAIR_SENTINEL_ANSWERS.get(trial.sentinelId ?? '');
     if (!expected) return false;
     return [
-      Number(response.sameMaterialLikelihood) !== expected.sameMaterialLikelihood,
-      Number(response.canonicalGlossChoice) !== expected.canonicalGlossChoice,
-      Number(response.canonicalMetalChoice) !== expected.canonicalMetalChoice,
+      expected.sameMaterialLikelihood !== undefined && Number(response.sameMaterialLikelihood) !== expected.sameMaterialLikelihood,
+      expected.canonicalGlossChoice !== undefined && Number(response.canonicalGlossChoice) !== expected.canonicalGlossChoice,
+      expected.canonicalMetalChoice !== undefined && Number(response.canonicalMetalChoice) !== expected.canonicalMetalChoice,
     ].some(Boolean);
   }
   if (type === 'forcedChoice') {
