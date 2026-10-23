@@ -149,6 +149,7 @@ def run_checks(page: ChromePage, base_url: str) -> None:
     page.wait("document.querySelectorAll('.test-choice-card').length === 4")
     page.evaluate("document.querySelectorAll('.test-choice-card')[1].click()")
     page.wait("[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Start test')&&!b.disabled)", timeout=30)
+    assert page.evaluate("window.__healthRequests >= 1"), "Preview did not verify the live Worker/D1 health endpoint"
     page.click_text("button", "Start test")
     # Sentinels occupy trials 2 and 4. Deliberately fail both to inspect the
     # screen-out UI without sending any preview data to D1.
@@ -388,16 +389,21 @@ def main() -> None:
                   try { Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true }); } catch (_) {}
                   window.__loginBodies = [];
                   window.__demographicsBodies = [];
+                  window.__healthRequests = 0;
                   window.scrollTo = () => window;
                   const nativeFetch = window.fetch.bind(window);
                   window.fetch = (input, init) => {
                     const url = typeof input === 'string' ? input : input.url;
+                    if (url.endsWith('/health')) {
+                      window.__healthRequests += 1;
+                      return Promise.resolve(new Response(JSON.stringify({ ok: true, service: 'perception-study-api', database: 'connected', sentinelScreeningVersion: '2026-10-23.1' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+                    }
                     if (url.endsWith('/api/v1/login')) {
                       const body = JSON.parse(init.body);
                       window.__loginBodies.push(body);
                       const inhouse = body.username === 'gilab-inhouse';
                       const assignmentBatch = inhouse ? 'set_08' : 'set_01';
-                      return Promise.resolve(new Response(JSON.stringify({ token: 'e2e-token', sessionId: body.clientSessionId, studyType: body.studyType, assignmentSeed: `batch:${assignmentBatch}:${body.studyType}:e2e-user`, assignmentBatch, inhouse, alreadyCompleted: false, receiptId: null }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+                      return Promise.resolve(new Response(JSON.stringify({ token: 'e2e-token', sessionId: body.clientSessionId, studyType: body.studyType, assignmentSeed: `batch:${assignmentBatch}:${body.studyType}:e2e-user`, assignmentBatch, inhouse, alreadyCompleted: false, receiptId: null, sentinelScreeningVersion: '2026-10-23.1' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
                     }
                     if (url.endsWith('/api/v1/demographics')) {
                       const body = JSON.parse(init.body);

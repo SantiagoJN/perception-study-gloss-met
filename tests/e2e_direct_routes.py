@@ -51,6 +51,14 @@ def main() -> None:
                     try { Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true }); } catch (_) {}
                     const originalFetch = globalThis.fetch.bind(globalThis);
                     globalThis.fetch = async (input, init) => {
+                      if (String(input).endsWith('/health')) {
+                        return new Response(JSON.stringify({
+                          ok: true,
+                          service: 'perception-study-api',
+                          database: 'connected',
+                          sentinelScreeningVersion: '2026-10-23.1',
+                        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                      }
                       if (String(input).includes('/api/v1/anonymous-login')) {
                         const request = JSON.parse(String(init?.body || '{}'));
                         return new Response(JSON.stringify({
@@ -64,6 +72,7 @@ def main() -> None:
                           anonymousEntry: true,
                           alreadyCompleted: false,
                           screenedOut: false,
+                          sentinelScreeningVersion: '2026-10-23.1',
                         }), { status: 200, headers: { 'Content-Type': 'application/json' } });
                       }
                       return originalFetch(input, init);

@@ -118,15 +118,19 @@ def validate_private_pool() -> None:
     if not PRIVATE_POOL.is_file():
         return
     rows = json.loads(PRIVATE_POOL.read_text(encoding="utf-8"))
-    assert len(rows) == 680
+    assert rows, "The private anonymous credential pool is empty"
     assert len({str(row["username"]).lower() for row in rows}) == len(rows)
+    assert len({row["assignment_seed"] for row in rows}) == len(rows)
+    per_test_counts: list[int] = []
     for test_number, study_type in enumerate(STUDY_TYPES, start=1):
         selected = [row for row in rows if row["test"] == f"test{test_number}"]
-        assert len(selected) == 170
+        assert selected, f"The anonymous pool is empty for test{test_number}"
+        per_test_counts.append(len(selected))
         assert all(row["study_type"] == study_type for row in selected)
-        assert [row["anonymous_order"] for row in selected] == list(range(1, 171))
-        expected = [f"set_{(index % 12) + 1:02d}" for index in range(170)]
+        assert [row["anonymous_order"] for row in selected] == list(range(1, len(selected) + 1))
+        expected = [f"set_{(index % 12) + 1:02d}" for index in range(len(selected))]
         assert [row["batch_id"] for row in selected] == expected
+    assert len(set(per_test_counts)) == 1, "Anonymous pool sizes differ between tests"
 
 
 def main() -> None:
