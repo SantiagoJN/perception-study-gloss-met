@@ -8,7 +8,7 @@ import { DemographicsForm, EMPTY_DEMOGRAPHICS, demographicColumns, demographicsC
 import { PairTraining } from './PairTraining';
 import { PAIR_TRAINING_EXAMPLES, type PairTrainingAttempt } from './pairTrainingData';
 import { ParticipantLogin } from './ParticipantLogin';
-import { collectClientMetadata, loginAnonymouslyToStudy, loginToStudy, readProlificIdentifiers, saveStudyDemographics, screenOutStudy, submitStudy, type AuthenticatedStudySession, type StudyScreenOut, type StudySubmission, type SubmissionTrial } from './study-api';
+import { collectClientMetadata, getStudyServiceStatus, loginAnonymouslyToStudy, loginToStudy, readProlificIdentifiers, saveStudyDemographics, screenOutStudy, submitStudy, type AuthenticatedStudySession, type StudyScreenOut, type StudySubmission, type SubmissionTrial } from './study-api';
 
 const ASSET_BASE = import.meta.env.BASE_URL;
 const SELECTION_DISPLAY_COUNT = 6;
@@ -33,6 +33,7 @@ type SelectionCandidate = SelectionImage & { candidate_id: string; is_same_mater
 type SelectionManifestTrial = { trial_id: string; difficulty_level?: DifficultyLevel; reference_source_type: 'measured' | 'svbrdf' | 'datasetv9'; reference: SelectionImage; candidates: SelectionCandidate[]; positive_count?: number; profile?: string };
 type SelectionTrial = SentinelMetadata & Omit<SelectionManifestTrial, 'difficulty_level'> & { difficulty_level?: TrialDifficulty; selectedCandidateIds: string[]; responseTimeMs?: number };
 type SentinelConfig = {
+  screening_version: string;
   positions: number[];
   tests: {
     test1: Array<{ sentinel_id: string; image_a: string; image_b: string; physical_relation: 'same_material' | 'different_material' }>;
@@ -447,7 +448,7 @@ async function loadSentinelConfig(): Promise<SentinelConfig> {
   const response = await fetch(manifestUrl('sentinel_trials.json'), { cache: 'no-store' });
   if (!response.ok) throw new Error('Sentinel trials are unavailable.');
   const config = await response.json() as SentinelConfig;
-  if (!Array.isArray(config.positions) || config.positions.length !== 5 || Object.values(config.tests).some((setups) => setups.length !== 5)) throw new Error('The sentinel configuration is incomplete.');
+  if (!config.screening_version || !Array.isArray(config.positions) || config.positions.length !== 5 || Object.values(config.tests).some((setups) => setups.length !== 5)) throw new Error('The sentinel configuration is incomplete.');
   return config;
 }
 function csvCell(value: unknown) { const text = value == null ? '' : String(value); return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text; }
@@ -742,10 +743,20 @@ export default function App() {
     const sampleSeed = `${assignmentSeed}:${metadata.sessionId}:${type}`;
     setPreparing(true); setPrepared(false); setError('');
     try {
-      const [sentinelConfig, fixedAssignment] = await Promise.all([
-        directTesting ? Promise.resolve(null) : loadSentinelConfig(),
+      const [availableSentinelConfig, fixedAssignment, serviceStatus] = await Promise.all([
+        loadSentinelConfig(),
         loadFixedTrialGroup(type, assignmentSeed),
+        sampleMode ? getStudyServiceStatus() : Promise.resolve(null),
       ]);
+      if (sampleMode && serviceStatus?.sentinelScreeningVersion !== availableSentinelConfig.screening_version) {
+        throw new Error('The preview/testing configuration is out of sync with the active study service. Please update the deployment before continuing.');
+      }
+      if (!sampleMode && authSession?.sentinelScreeningVersion !== availableSentinelConfig.screening_version) {
+        throw new Error('The study configuration is temporarily out of sync. Please contact the study organiser before continuing.');
+      }
+      // Testing keeps its intentionally sentinel-free short samples, while
+      // preview uses sentinels. Both modes still verify the live Worker and D1.
+      const sentinelConfig = directTesting ? null : availableSentinelConfig;
       if (type === 'selection') {
         const response = await fetch(manifestUrl('selection_trials.json'), { cache: 'no-store' });
         if (!response.ok) throw new Error('Selection trials are not available yet. Generate them after datasetv7 and G90 are complete.');

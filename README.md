@@ -218,11 +218,22 @@ python3 scripts/generate_fixed_batch_credentials.py
 ```
 
 The current bank is stored in the gitignored directory
-`private/credentials/fixed_batches_v1/`. It contains 10 usernames for every
-test/batch combination (480 participant credentials), two universal internal
-accounts (`gilab-inhouse` and `gilab-testing`), the D1 import SQL, a complete
-credential-to-batch mapping and one Prolific-ready TXT file per test. Never
-publish or commit this directory.
+`private/credentials/fixed_batches_v1/`. It contains the fixed-batch participant
+credentials, two universal internal accounts (`gilab-inhouse` and
+`gilab-testing`), the D1 import SQL, a complete credential-to-batch mapping and
+one Prolific-ready TXT file per test. Never publish or commit this directory.
+
+Anonymous Prolific entry uses a separate internal-only pool. It currently has
+3,000 credentials per test, distributed as exactly 250 credentials for each of
+the 12 batches. Extend it without changing existing allocations with:
+
+```bash
+python3 scripts/extend_anonymous_credentials.py \
+  --target-per-test 3000 --tag <unique-tag>
+```
+
+Import only the extension SQL produced under
+`private/credentials/fixed_batches_v1/anonymous_v1/extensions/<unique-tag>/`.
 
 Generate the browser manifest and build the app with:
 

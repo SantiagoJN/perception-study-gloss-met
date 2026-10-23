@@ -76,6 +76,18 @@ script refreshes the merged Prolific TXT/CSV files and writes extension-only SQL
 under `private/credentials/fixed_batches_v1/extensions/<tag>/` for import into
 D1.
 
+The `/anon` routes use a separate internal-only credential pool, currently
+containing 3,000 entries per test and 250 per fixed batch. Extend that pool
+without changing any existing allocation with:
+
+```bash
+python3 scripts/extend_anonymous_credentials.py \
+  --target-per-test 3000 --tag <unique-tag>
+```
+
+Import only the generated extension SQL from
+`private/credentials/fixed_batches_v1/anonymous_v1/extensions/<unique-tag>/`.
+
 The generated directory contains a complete CSV/JSON mapping and one TXT per
 test in Prolific's `username,password` format. The two values are deliberately
 identical because the web asks participants only for their username. These

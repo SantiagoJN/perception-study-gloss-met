@@ -7,6 +7,7 @@ export function sentinelScreenOutThreshold(studyType) {
   return studyType === 'selection' ? 3 : 2;
 }
 const SENTINEL_COUNT = 5;
+export const SENTINEL_SCREENING_VERSION = '2026-10-23.1';
 const PAIR_SENTINEL_ANSWERS = new Map([
   ['SENTINEL_T1_01', { sameMaterialLikelihood: 1, canonicalGlossChoice: 1 }],
   ['SENTINEL_T1_02', { sameMaterialLikelihood: 1, canonicalGlossChoice: -1, canonicalMetalChoice: -1 }],
@@ -50,7 +51,25 @@ export default {
     }
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/health') {
-      return withCors(json({ ok: true, service: 'perception-study-api' }), origin);
+      try {
+        const databaseProbe = await env.DB.prepare('SELECT 1 AS ok').first();
+        if (Number(databaseProbe?.ok) !== 1) throw new Error('Unexpected D1 health-check result.');
+        return withCors(json({
+          ok: true,
+          service: 'perception-study-api',
+          database: 'connected',
+          sentinelScreeningVersion: SENTINEL_SCREENING_VERSION,
+        }), origin);
+      } catch (error) {
+        console.error('D1 health check failed', error);
+        return withCors(json({
+          ok: false,
+          service: 'perception-study-api',
+          database: 'unavailable',
+          sentinelScreeningVersion: SENTINEL_SCREENING_VERSION,
+          error: 'The study database is temporarily unavailable.',
+        }, 503), origin);
+      }
     }
     if (!origin) return jsonError('Origin not allowed.', 403);
     try {
@@ -325,7 +344,7 @@ async function establishSession({ request, env, credential, studyType, sessionId
     exp: Math.floor(Date.now() / 1000) + tokenTtl(env),
   }, env.SESSION_SIGNING_SECRET);
   const effectiveSeed = isInhouse ? `batch:${session.assignment_batch}:${studyType}:gilab-inhouse` : credential.assignment_seed;
-  return json({ ok: true, token, sessionId: effectiveSessionId, studyType, assignmentSeed: effectiveSeed, assignmentBatch: session.assignment_batch, inhouse: session.inhouse === 1, studyRunId: session.study_run_id, accessSource, anonymousEntry, alreadyCompleted: session.status === 'completed', receiptId: session.receipt_id ?? null, screenedOut: session.screened_out === 1, screenOutReceiptId: session.screen_out_receipt_id ?? null, sentinelFailures: Number(session.sentinel_failures ?? 0) });
+  return json({ ok: true, token, sessionId: effectiveSessionId, studyType, assignmentSeed: effectiveSeed, assignmentBatch: session.assignment_batch, inhouse: session.inhouse === 1, studyRunId: session.study_run_id, accessSource, anonymousEntry, alreadyCompleted: session.status === 'completed', receiptId: session.receipt_id ?? null, screenedOut: session.screened_out === 1, screenOutReceiptId: session.screen_out_receipt_id ?? null, sentinelFailures: Number(session.sentinel_failures ?? 0), sentinelScreeningVersion: SENTINEL_SCREENING_VERSION });
 }
 
 function isDirectParticipantMapping(mapping, credentialId) {

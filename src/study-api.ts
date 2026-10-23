@@ -47,7 +47,15 @@ export type AuthenticatedStudySession = {
   screenedOut: boolean;
   screenOutReceiptId?: string | null;
   sentinelFailures?: number;
+  sentinelScreeningVersion: string;
   anonymousEntry?: boolean;
+};
+
+export type StudyServiceStatus = {
+  ok: true;
+  service: string;
+  database: 'connected';
+  sentinelScreeningVersion: string;
 };
 
 export type SubmissionTrial = {
@@ -193,6 +201,27 @@ export async function saveStudyDemographics(token: string, checkpoint: StudyDemo
 
 export async function screenOutStudy(token: string, submission: StudyScreenOut): Promise<StudyStorageResult> {
   return apiRequest('/api/v1/screen-out', submission, token, 3);
+}
+
+export async function getStudyServiceStatus(): Promise<StudyServiceStatus> {
+  const base = window.USER_STUDY_CONFIG?.apiBaseUrl?.trim().replace(/\/$/, '') || DEFAULT_STUDY_API_BASE_URL;
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(`${base}/health`, { method: 'GET', cache: 'no-store', signal: controller.signal });
+    const body = await response.json().catch(() => ({})) as Partial<StudyServiceStatus> & { error?: string };
+    if (!response.ok || body.ok !== true || body.database !== 'connected' || !body.sentinelScreeningVersion) {
+      throw new Error(body.error || 'The study service or database is unavailable.');
+    }
+    return body as StudyServiceStatus;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('The study service did not respond in time. Please check your connection and try again.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 async function apiRequest<T>(path: string, payload: unknown, token?: string, attempts = 1): Promise<T> {

@@ -87,6 +87,12 @@ def main() -> None:
     assert_unique((item["training_id"] for item in training), "scene-training IDs")
     assert_unique((item["trial_id"] for item in selections), "selection IDs")
     assert sentinels["positions"] == [2, 4, 8, 12, 15]
+    worker_source = (PROJECT / "cloudflare-worker/src/index.js").read_text(encoding="utf-8")
+    worker_version = re.search(r"SENTINEL_SCREENING_VERSION = '([^']+)'", worker_source)
+    assert worker_version, "Worker sentinel-screening version is missing"
+    assert sentinels.get("screening_version") == worker_version.group(1), (
+        "The public sentinel manifest and Worker answer key are out of sync"
+    )
     assert set(sentinels["tests"]) == {"test1", "test2", "test3", "test4"}
     assert all(len(items) == 5 for items in sentinels["tests"].values())
     assert_unique(

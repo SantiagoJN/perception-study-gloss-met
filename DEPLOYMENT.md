@@ -146,9 +146,10 @@ answer overlays; do not distribute that route to participants.
 ## 4. Cloudflare capacity before recruitment
 
 Cloudflare documents the R2 free allowance as 10 million Class-B reads per
-month with free egress. The current maximum bank (680 issued participant
-credentials) is far below that request count, especially once the custom-domain
-cache is active. The important R2 production risk is the variable throttle on
+month with free egress. The anonymous credential pool contains 3,000 slots per
+test, but preallocating a slot does not generate R2 traffic; only actual study
+sessions do. Monitor real recruitment volume and cache hit rate rather than the
+pool size. The important R2 production risk is the variable throttle on
 `r2.dev`, so do not recruit until the custom domain is active and the public
 development URL has been disabled.
 
