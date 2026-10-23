@@ -391,6 +391,19 @@ def main() -> None:
                   window.__demographicsBodies = [];
                   window.__healthRequests = 0;
                   window.scrollTo = () => window;
+                  // UI E2E checks must not depend on R2 latency or regional
+                  // availability. Keep local tutorial assets unchanged, but
+                  // make external stimulus images load deterministically.
+                  const nativeImageSource = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+                  const imagePlaceholder = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+                  Object.defineProperty(HTMLImageElement.prototype, 'src', {
+                    configurable: true,
+                    get: nativeImageSource.get,
+                    set(value) {
+                      const resolved = new URL(String(value), location.href);
+                      nativeImageSource.set.call(this, resolved.origin === location.origin ? value : imagePlaceholder);
+                    },
+                  });
                   const nativeFetch = window.fetch.bind(window);
                   window.fetch = (input, init) => {
                     const url = typeof input === 'string' ? input : input.url;
