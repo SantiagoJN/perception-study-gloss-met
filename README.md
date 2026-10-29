@@ -145,14 +145,18 @@ and next two trials are preloaded while the participant advances. All five
 participant tests use WebP thumbnails in their normal layouts: square material
 renders are 512 x 512, while the Test 3 reference and question composites are
 768 x 256 and 1152 x 256 respectively. Test 3.2 uses 768 x 256 references and
-896 x 256 two-option question scenes. Opening the zoom view still loads the
-original full-resolution PNG. If a thumbnail is temporarily absent from R2,
-the browser falls back to its original PNG instead of blocking the study.
+896 x 256 two-option question scenes. Both contextual tests begin with four
+interactive, non-recorded training examples; Test 3.2 uses the same two-option
+layout as its experimental trials, with correct positions balanced 2/2.
+Opening the zoom view still loads the original full-resolution PNG. If a
+thumbnail is temporarily absent from R2, the browser falls back to its original
+PNG instead of blocking the study.
 
 Generate the complete thumbnail set from the external dataset checkout with:
 
 ```bash
 python3 scripts/generate_datasetv9_thumbnails.py
+python3 ../datasetv9/groups3/build_thumbnails.py
 ```
 
 The generated directories (not committed to this frontend repository) are:
@@ -161,7 +165,8 @@ The generated directories (not committed to this frontend repository) are:
 - `../datasetv9/groups4/thumbnails/` (1200 Test 3 composites from `renders3`);
 - `../datasetv9/groups4/sentinels_thumbnails/` (10 Test 3 sentinel composites);
 - `../datasetv9/groups3/thumbnails/` (1200 Test 3.2 composites);
-- `../datasetv9/groups3/sentinels_thumbnails/` (10 Test 3.2 sentinel composites).
+- `../datasetv9/groups3/sentinels_thumbnails/` (10 Test 3.2 sentinel composites);
+- `../datasetv9/groups3/training_thumbnails/` (8 Test 3.2 training composites).
 
 Upload them to R2 under those same object prefixes before publishing the
 frontend. Re-running the command is incremental; use `--force` only when every

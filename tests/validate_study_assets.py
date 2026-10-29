@@ -54,6 +54,9 @@ def resolve_thumbnail(relative: str) -> tuple[Path, tuple[int, int]] | None:
     if relative.startswith("datasetv9/groups3/sentinels/"):
         expected = (768, 256) if "[reference]" in relative else (896, 256)
         return ROOT / "datasetv9/groups3/sentinels_thumbnails" / suffix, expected
+    if relative.startswith("datasetv9/groups3/training/"):
+        expected = (768, 256) if "[A]" in relative else (896, 256)
+        return ROOT / "datasetv9/groups3/training_thumbnails" / suffix, expected
     return None
 
 
@@ -83,16 +86,18 @@ def main() -> None:
     scenes = load("scene_matching_trials.json")["trials"]
     contexts2 = load("context_matching2_trials.json")["trials"]
     training = load("scene_matching_training.json")["examples"]
+    context_training = load("context_matching2_training.json")["examples"]
     selections = load("selection_trials.json")["trials"]
     sentinels = load("sentinel_trials.json")
     answers = load("testing_ground_truth.json")
 
-    assert [len(pairs), len(forced), len(scenes), len(contexts2), len(training), len(selections)] == [600, 600, 600, 600, 4, 600]
+    assert [len(pairs), len(forced), len(scenes), len(contexts2), len(training), len(context_training), len(selections)] == [600, 600, 600, 600, 4, 4, 600]
     assert_unique((item["pair_id"] for item in pairs), "pair IDs")
     assert_unique((item["trial_id"] for item in forced), "forced-choice IDs")
     assert_unique((item["trial_id"] for item in scenes), "scene IDs")
     assert_unique((item["trial_id"] for item in contexts2), "two-option context IDs")
     assert_unique((item["training_id"] for item in training), "scene-training IDs")
+    assert_unique((item["training_id"] for item in context_training), "two-option scene-training IDs")
     assert_unique((item["trial_id"] for item in selections), "selection IDs")
     assert sentinels["positions"] == [2, 4, 8, 12, 15]
     worker_source = (PROJECT / "cloudflare-worker/src/index.js").read_text(encoding="utf-8")
@@ -161,6 +166,13 @@ def main() -> None:
         assert item["target_label"] == "R"
         assert len(item["first_scene"]) == len(item["second_scene"]) == 1
         assert item["correct_option"] in (1, 2, 3)
+    assert Counter(item["correct_option"] for item in context_training) == Counter({1: 2, 2: 2})
+    for item in context_training:
+        assert item["target_label"] == "R"
+        assert len(item["first_scene"]) == len(item["second_scene"]) == 1
+        assert len(item["slot_materials_scene_1"]) == 1
+        assert len(item["slot_materials_scene_2"]) == 2
+        assert item["slot_materials_scene_2"][item["correct_option"] - 1] == item["slot_materials_scene_1"][0]
 
     if not args.skip_local_assets:
         source_scenes = json.loads((SOURCE / "test3.json").read_text(encoding="utf-8"))["setups"]
@@ -217,6 +229,8 @@ def main() -> None:
         image_paths.update(image["image_path"] for image in [*item["first_scene"], *item["second_scene"]])
     for item in contexts2:
         image_paths.update(image["image_path"] for image in [*item["first_scene"], *item["second_scene"]])
+    for item in context_training:
+        image_paths.update(image["image_path"] for image in [*item["first_scene"], *item["second_scene"]])
     for item in selections:
         image_paths.add(item["reference"]["image_path"])
         image_paths.update(candidate["image_path"] for candidate in item["candidates"])
@@ -259,6 +273,7 @@ def main() -> None:
         "scene_matches": len(scenes),
         "context_matches2": len(contexts2),
         "scene_training": len(training),
+        "context_training": len(context_training),
         "selections": len(selections),
         "unique_image_references": len(image_paths),
         "local_images_verified": not args.skip_local_assets,

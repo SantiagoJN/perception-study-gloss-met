@@ -17,6 +17,8 @@ ROUTES = ("test1_pair_comparison", "test2_2afc", "test3_matching", "test3.2_matc
 
 
 def main() -> None:
+    training_examples = json.loads((PROJECT / "public/context_matching2_training.json").read_text())["examples"]
+    assert len(training_examples) == 4
     server_port, debug_port = free_ports(2)
     with tempfile.TemporaryDirectory(prefix="material-study-routes-") as profile:
         server = subprocess.Popen(
@@ -129,7 +131,14 @@ def main() -> None:
             page.evaluate("document.querySelectorAll('.test-choice-card')[3].click()")
             page.wait("[...document.querySelectorAll('button')].some(button => button.textContent.includes('Start test') && !button.disabled)", timeout=30)
             page.evaluate("[...document.querySelectorAll('button')].find(button => button.textContent.includes('Start test')).click()")
-            page.wait("document.querySelectorAll('.composite-scene-label:not(:disabled)').length === 2")
+            page.wait("document.querySelector('.training-badge')?.textContent === 'Training' && document.querySelectorAll('.composite-scene-label:not(:disabled)').length === 2")
+            for example_index, example in enumerate(training_examples):
+                page.wait(f"document.querySelector('.trial-header-actions')?.textContent.includes('Example {example_index + 1} of 4')")
+                page.evaluate(f"document.querySelectorAll('.composite-scene-label:not(:disabled)')[{example['correct_option'] - 1}].click()")
+                page.click_text("button", "Check answer")
+                page.wait("document.querySelector('.training-footer-feedback .training-feedback')?.textContent.includes('Correct!')")
+                page.click_text("button", "Begin test" if example_index == 3 else "Next example")
+            page.wait("!document.querySelector('.training-badge') && document.querySelectorAll('.composite-scene-label:not(:disabled)').length === 2")
             assert page.evaluate("document.body.innerText.includes('1 or 2')")
             assert page.evaluate("window.__mockedStimulusImages > 0"), "The clean-runner stimulus mock was not exercised"
 
