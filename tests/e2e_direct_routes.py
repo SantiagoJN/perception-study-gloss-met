@@ -49,6 +49,23 @@ def main() -> None:
                 "source": """
                     delete Array.prototype.at;
                     try { Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true }); } catch (_) {}
+                    // A clean GitHub runner has the public manifests but not
+                    // the external dataset checkout. Exercise the complete
+                    // preload/UI path with a deterministic image while
+                    // leaving normal interface and tutorial assets intact.
+                    window.__mockedStimulusImages = 0;
+                    const nativeImageSource = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+                    const imagePlaceholder = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+                    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+                      configurable: true,
+                      get: nativeImageSource.get,
+                      set(value) {
+                        const resolved = new URL(String(value), location.href);
+                        const isStimulus = resolved.pathname.includes('/datasetv') || resolved.pathname.includes('/stimuli/');
+                        if (isStimulus) window.__mockedStimulusImages += 1;
+                        nativeImageSource.set.call(this, isStimulus ? imagePlaceholder : value);
+                      },
+                    });
                     let localStudyConfig = {};
                     Object.defineProperty(window, 'USER_STUDY_CONFIG', {
                       configurable: true,
@@ -114,6 +131,7 @@ def main() -> None:
             page.evaluate("[...document.querySelectorAll('button')].find(button => button.textContent.includes('Start test')).click()")
             page.wait("document.querySelectorAll('.composite-scene-label:not(:disabled)').length === 2")
             assert page.evaluate("document.body.innerText.includes('1 or 2')")
+            assert page.evaluate("window.__mockedStimulusImages > 0"), "The clean-runner stimulus mock was not exercised"
 
             traversal = Request(base + "/%2e%2e/server.py")
             try:
