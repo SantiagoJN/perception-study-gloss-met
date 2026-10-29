@@ -31,6 +31,7 @@ test('health checks D1 without writing and reports the screening version', async
     service: 'perception-study-api',
     database: 'connected',
     sentinelScreeningVersion: SENTINEL_SCREENING_VERSION,
+    studyTypes: ['pairJudgment', 'forcedChoice', 'sceneMatching', 'contextMatching2', 'selection'],
   });
 });
 
@@ -55,6 +56,7 @@ test('health fails closed when D1 is unavailable', async () => {
     assert.equal(body.ok, false);
     assert.equal(body.database, 'unavailable');
     assert.equal(body.sentinelScreeningVersion, SENTINEL_SCREENING_VERSION);
+    assert.deepEqual(body.studyTypes, ['pairJudgment', 'forcedChoice', 'sceneMatching', 'contextMatching2', 'selection']);
   } finally {
     console.error = originalConsoleError;
   }

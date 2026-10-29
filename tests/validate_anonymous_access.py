@@ -49,7 +49,8 @@ def build_database() -> sqlite3.Connection:
 def validate_screened_out_status_migration() -> None:
     database = sqlite3.connect(":memory:")
     migrations = sorted(MIGRATIONS.glob("*.sql"))
-    for migration in migrations[:-1]:
+    status_migration = next(path for path in migrations if path.name.startswith("0010_"))
+    for migration in migrations[:migrations.index(status_migration)]:
         database.executescript(migration.read_text(encoding="utf-8"))
     database.execute(
         """INSERT INTO access_credentials
@@ -81,13 +82,23 @@ def validate_screened_out_status_migration() -> None:
            (session_id, trial_number, trial_id, response_time_ms, response_json)
            VALUES ('screened-session', 1, 'sentinel-trial', 1000, '{}')"""
     )
-    database.executescript(migrations[-1].read_text(encoding="utf-8"))
+    database.executescript(status_migration.read_text(encoding="utf-8"))
     assert database.execute(
         "SELECT status FROM study_sessions WHERE id = 'screened-session'"
     ).fetchone()[0] == "screened_out"
     assert database.execute(
         "SELECT count(*) FROM trial_responses WHERE session_id = 'screened-session'"
     ).fetchone()[0] == 1
+    assert database.execute("PRAGMA foreign_key_check").fetchall() == []
+    for migration in migrations[migrations.index(status_migration) + 1:]:
+        database.executescript(migration.read_text(encoding="utf-8"))
+    database.execute(
+        """INSERT INTO access_credentials
+           (username, password_hash, password_salt, password_iterations,
+            assigned_study_type, assignment_seed)
+           VALUES ('context-user', 'AA==', 'AA==', 100000,
+                   'contextMatching2', 'batch:set_01:context-user')"""
+    )
     assert database.execute("PRAGMA foreign_key_check").fetchall() == []
 
 

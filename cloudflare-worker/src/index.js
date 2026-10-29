@@ -1,4 +1,4 @@
-const STUDY_TYPES = new Set(['pairJudgment', 'forcedChoice', 'sceneMatching', 'selection']);
+const STUDY_TYPES = new Set(['pairJudgment', 'forcedChoice', 'sceneMatching', 'contextMatching2', 'selection']);
 const INTERNAL_USERNAMES = new Set(['gilab-inhouse', 'gilab-testing']);
 const encoder = new TextEncoder();
 const DUMMY_SALT = 'bWlzc2luZy1jcmVkZW50aWFsLXNhbHQ=';
@@ -29,6 +29,13 @@ const SCENE_SENTINEL_ANSWERS = new Map([
   ['SENTINEL_T3_04', 2],
   ['SENTINEL_T3_05', 1],
 ]);
+const CONTEXT2_SENTINEL_ANSWERS = new Map([
+  ['SENTINEL_T32_01', 1],
+  ['SENTINEL_T32_02', 2],
+  ['SENTINEL_T32_03', 1],
+  ['SENTINEL_T32_04', 2],
+  ['SENTINEL_T32_05', 1],
+]);
 const SELECTION_SENTINEL_ANSWERS = new Map([
   ['SENTINEL_T4_01', new Set(['SENTINEL_T4_01_candidate_1', 'SENTINEL_T4_01_candidate_4'])],
   ['SENTINEL_T4_02', new Set(['SENTINEL_T4_02_candidate_1'])],
@@ -40,6 +47,7 @@ const SENTINEL_ANSWERS = new Map([
   ['pairJudgment', PAIR_SENTINEL_ANSWERS],
   ['forcedChoice', FORCED_SENTINEL_ANSWERS],
   ['sceneMatching', SCENE_SENTINEL_ANSWERS],
+  ['contextMatching2', CONTEXT2_SENTINEL_ANSWERS],
   ['selection', SELECTION_SENTINEL_ANSWERS],
 ]);
 
@@ -59,6 +67,7 @@ export default {
           service: 'perception-study-api',
           database: 'connected',
           sentinelScreeningVersion: SENTINEL_SCREENING_VERSION,
+          studyTypes: [...STUDY_TYPES],
         }), origin);
       } catch (error) {
         console.error('D1 health check failed', error);
@@ -67,6 +76,7 @@ export default {
           service: 'perception-study-api',
           database: 'unavailable',
           sentinelScreeningVersion: SENTINEL_SCREENING_VERSION,
+          studyTypes: [...STUDY_TYPES],
           error: 'The study database is temporarily unavailable.',
         }, 503), origin);
       }
@@ -675,7 +685,7 @@ function normalizeTrials(trials) {
     if (!Number.isInteger(trialNumber) || trialNumber < 1 || trialNumber > 150 || seenNumbers.has(trialNumber) || !trialId || !Number.isInteger(responseTimeMs) || responseTimeMs < 0) throw new Error(`Invalid trial at index ${index}.`);
     seenNumbers.add(trialNumber);
     const suppliedSentinelId = cleanString(trial.sentinelId, 240);
-    const inferredSentinelId = /^SENTINEL_T[1-4]_0[1-5]$/.test(trialId) ? trialId : '';
+    const inferredSentinelId = /^SENTINEL_T(?:[1-4]|32)_0[1-5]$/.test(trialId) ? trialId : '';
     const sentinelId = suppliedSentinelId || inferredSentinelId || null;
     return { trialNumber, trialId, responseTimeMs, isSentinel: sentinelId ? 1 : 0, sentinelId, response: safeObject(trial.response) };
   });
@@ -720,6 +730,9 @@ function sentinelScore(studyType, trial) {
   }
   if (studyType === 'sceneMatching') {
     return { checks: 1, failures: Number(Number(response.selectedOption) !== SCENE_SENTINEL_ANSWERS.get(trial.sentinelId)) };
+  }
+  if (studyType === 'contextMatching2') {
+    return { checks: 1, failures: Number(Number(response.selectedOption) !== CONTEXT2_SENTINEL_ANSWERS.get(trial.sentinelId)) };
   }
   const selected = new Set(Array.isArray(response.selectedCandidateIds) ? response.selectedCandidateIds.map(String) : []);
   const expected = SELECTION_SENTINEL_ANSWERS.get(trial.sentinelId) ?? new Set();

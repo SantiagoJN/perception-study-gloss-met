@@ -58,6 +58,16 @@ def main() -> None:
             strip_image_metadata(image)
     write(scene_path, scene_payload)
 
+    context_path = root / "context_matching2_trials.json"
+    context_payload, context_trials = load_trials(context_path)
+    for trial in context_trials:
+        trial.pop("correct_option", None)
+        trial.pop("family_id", None)
+        trial.pop("source_test2_trial_id", None)
+        for image in [*trial.get("first_scene", []), *trial.get("second_scene", [])]:
+            strip_image_metadata(image)
+    write(context_path, context_payload)
+
     selection_path = root / "selection_trials.json"
     selection_payload, selection_trials = load_trials(selection_path)
     for trial in selection_trials:

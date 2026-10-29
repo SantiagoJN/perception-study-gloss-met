@@ -14,7 +14,7 @@ const ASSET_BASE = import.meta.env.BASE_URL;
 const SELECTION_DISPLAY_COUNT = 6;
 const MAX_SELECTIONS = 2;
 type Stage = 'invalid' | 'login' | 'authenticating' | 'welcome' | 'resume' | 'demographics' | 'explanation' | 'chooser' | 'instructions' | 'training' | 'study' | 'submitting' | 'screening' | 'screened_out' | 'complete';
-type StudyType = 'forcedChoice' | 'pairJudgment' | 'sceneMatching' | 'selection';
+type StudyType = 'forcedChoice' | 'pairJudgment' | 'sceneMatching' | 'contextMatching2' | 'selection';
 type InhouseCredentials = { username: string; password: string; runId: string };
 type RelativeChoice = 'a' | 'same' | 'b' | '';
 type DifficultyLevel = 'easy' | 'medium_easy' | 'medium_hard' | 'hard';
@@ -39,6 +39,7 @@ type SentinelConfig = {
     test1: Array<{ sentinel_id: string; image_a: string; image_b: string; physical_relation: 'same_material' | 'different_material' }>;
     test2: Array<{ sentinel_id: string; reference: string; solution: string; confounder: string; correct_option: 'A' | 'B' }>;
     test3: Array<{ sentinel_id: string; reference_scene: string; question_scene: string; shared_factor: 'geometry' | 'illumination'; correct_option: 1 | 2 | 3 }>;
+    test3_2: Array<{ sentinel_id: string; reference_scene: string; question_scene: string; shared_factor: 'geometry' | 'illumination'; correct_option: 1 | 2 }>;
     test4: Array<{ sentinel_id: string; reference: string; candidates: Array<{ role: 'solution' | 'confounder'; image_path: string }> }>;
   };
 };
@@ -48,7 +49,7 @@ type FixedTrialGroupsManifest = {
   seed: string;
   group_count: number;
   group_size: number;
-  tests: Record<'test1' | 'test2' | 'test3' | 'test4', { id_field: string; groups: FixedTrialGroup[] }>;
+  tests: Record<'test1' | 'test2' | 'test3' | 'test3_2' | 'test4', { id_field: string; groups: FixedTrialGroup[] }>;
 };
 type FixedTrialAssignment = { setId: string; trialIds: string[] };
 type SessionMetadata = { participantId: string; sessionId: string; startedAt: string; userAgent: string; screenWidth: number; screenHeight: number };
@@ -56,6 +57,7 @@ type TestingGroundTruth = {
   pairs: Record<string, 1 | 5>;
   forced_choices: Record<string, 'A' | 'B'>;
   scene_matches: Record<string, 1 | 2 | 3 | 4>;
+  context_matches2: Record<string, 1 | 2>;
   selections: Record<string, string[]>;
 };
 type StoredProgress = {
@@ -79,11 +81,13 @@ const TEST_COPY = {
   forcedChoice: { title: 'Reference matching', detail: 'Choose which of two options is made of the same material as a reference image.' },
   pairJudgment: { title: 'Pair comparison', detail: 'Judge whether two objects share a material, and compare their glossiness and metallicness independently.' },
   sceneMatching: { title: 'In-context matching', detail: 'Match one reference object to one of three candidates across two scenes rendered under different geometry or illumination conditions.' },
+  contextMatching2: { title: 'Two-option in-context matching', detail: 'Choose between the same two alternatives as in reference matching, with contextual probes showing the scene change.' },
   selection: { title: 'Multiple matching', detail: 'For each reference, inspect 6 candidates and select up to two objects that appear to have the same underlying material.' },
 } satisfies Record<StudyType, { title: string; detail: string }>;
 const INHOUSE_STUDY_ORDER: StudyType[] = ['pairJudgment', 'forcedChoice', 'sceneMatching', 'selection'];
-const STUDY_SESSION_SUFFIX: Record<StudyType, string> = { pairJudgment: 't1', forcedChoice: 't2', sceneMatching: 't3', selection: 't4' };
-const REDIRECT_TEST_KEYS: Record<StudyType, string> = { pairJudgment: 'test1', forcedChoice: 'test2', sceneMatching: 'test3', selection: 'test4' };
+const STUDY_SESSION_SUFFIX: Record<StudyType, string> = { pairJudgment: 't1', forcedChoice: 't2', sceneMatching: 't3', contextMatching2: 't32', selection: 't4' };
+const REDIRECT_TEST_KEYS: Record<StudyType, string> = { pairJudgment: 'test1', forcedChoice: 'test2', sceneMatching: 'test3', contextMatching2: 'test3_2', selection: 'test4' };
+function isSceneStudy(type: StudyType | null): type is 'sceneMatching' | 'contextMatching2' { return type === 'sceneMatching' || type === 'contextMatching2'; }
 function sentinelScreenOutThreshold(type: StudyType) {
   return type === 'selection' ? 3 : 2;
 }
@@ -104,6 +108,9 @@ const SCENE_SENTINEL_ANSWERS = new Map<string, number>([
   ['SENTINEL_T3_03', 3],
   ['SENTINEL_T3_04', 2],
   ['SENTINEL_T3_05', 1],
+]);
+const CONTEXT2_SENTINEL_ANSWERS = new Map<string, number>([
+  ['SENTINEL_T32_01', 1], ['SENTINEL_T32_02', 2], ['SENTINEL_T32_03', 1], ['SENTINEL_T32_04', 2], ['SENTINEL_T32_05', 1],
 ]);
 
 function createId() {
@@ -130,7 +137,7 @@ function progressStorageKey(sessionId: string) { return `material-constancy-prog
 function directStudyType(): StudyType | null {
   const segments = location.pathname.replace(/\/+$/, '').split('/');
   const route = segments[segments.length - 1];
-  return ({ test1_pair_comparison: 'pairJudgment', test2_2afc: 'forcedChoice', test3_matching: 'sceneMatching', test4_mm: 'selection' } as Record<string, StudyType>)[route ?? ''] ?? null;
+  return ({ test1_pair_comparison: 'pairJudgment', test2_2afc: 'forcedChoice', test3_matching: 'sceneMatching', 'test3.2_matching2': 'contextMatching2', test4_mm: 'selection' } as Record<string, StudyType>)[route ?? ''] ?? null;
 }
 function isTestingRoute() { return location.pathname.replace(/\/+$/, '').endsWith('/testing'); }
 function isPreviewRoute() { return location.pathname.replace(/\/+$/, '').endsWith('/preview'); }
@@ -151,7 +158,7 @@ function trialCount(type: StudyType) {
   if (!isTestingMode()) return 50;
   const parameter = new URLSearchParams(location.search).get('trials');
   const requested = parameter === null && isTestingRoute() ? 8 : Number(parameter);
-  if (type === 'selection' || type === 'sceneMatching') return Number.isInteger(requested) && requested >= 1 && requested <= 50 ? requested : 8;
+  if (type === 'selection' || isSceneStudy(type)) return Number.isInteger(requested) && requested >= 1 && requested <= 50 ? requested : 8;
   return Number.isInteger(requested) && (requested === 50 || requested >= 8 && requested <= 48 && requested % 8 === 0) ? requested : 8;
 }
 function hashSeed(text: string) { let value = 2166136261; for (let i = 0; i < text.length; i += 1) { value ^= text.charCodeAt(i); value = Math.imul(value, 16777619); } return value >>> 0; }
@@ -181,6 +188,8 @@ function thumbnailPath(path: string) {
   if (normalized.startsWith('datasetv9/renders/')) return webp.replace('datasetv9/renders/', 'datasetv9/thumbnails/');
   if (normalized.startsWith('datasetv9/groups4/renders3/')) return webp.replace('datasetv9/groups4/renders3/', 'datasetv9/groups4/thumbnails/');
   if (normalized.startsWith('datasetv9/groups4/sentinels/')) return webp.replace('datasetv9/groups4/sentinels/', 'datasetv9/groups4/sentinels_thumbnails/');
+  if (normalized.startsWith('datasetv9/groups3/renders/')) return webp.replace('datasetv9/groups3/renders/', 'datasetv9/groups3/thumbnails/');
+  if (normalized.startsWith('datasetv9/groups3/sentinels/')) return webp.replace('datasetv9/groups3/sentinels/', 'datasetv9/groups3/sentinels_thumbnails/');
   return path;
 }
 function ThumbnailImage({ path, originalPath = path, alt }: { path: string; originalPath?: string; alt: string }) {
@@ -344,10 +353,11 @@ function selectSceneMatches(entries: SceneMatchingManifestTrial[], count: number
   if (selected.length !== requested) throw new Error('The in-context manifest cannot provide the requested difficulty/change balance.');
   return shuffle(selected, random).map((entry) => ({ ...entry, selectedOption: null }));
 }
-const FIXED_GROUP_TEST_KEYS: Record<StudyType, 'test1' | 'test2' | 'test3' | 'test4'> = {
+const FIXED_GROUP_TEST_KEYS: Record<StudyType, 'test1' | 'test2' | 'test3' | 'test3_2' | 'test4'> = {
   pairJudgment: 'test1',
   forcedChoice: 'test2',
   sceneMatching: 'test3',
+  contextMatching2: 'test3_2',
   selection: 'test4',
 };
 async function loadFixedTrialGroup(type: StudyType, assignmentSeed: string): Promise<FixedTrialAssignment> {
@@ -432,6 +442,19 @@ function sceneMatchingSentinels(config: SentinelConfig): SceneMatchingTrial[] {
     selectedOption: null,
   }));
 }
+function contextMatching2Sentinels(config: SentinelConfig): SceneMatchingTrial[] {
+  return config.tests.test3_2.map((item) => ({
+    trial_id: item.sentinel_id,
+    sentinelId: item.sentinel_id,
+    isSentinel: true,
+    difficulty_level: 'sentinel',
+    shared_factor: item.shared_factor,
+    target_label: 'R',
+    first_scene: [sentinelImage(item.sentinel_id, 'reference_scene', item.reference_scene)],
+    second_scene: [sentinelImage(item.sentinel_id, 'question_scene', item.question_scene)],
+    selectedOption: null,
+  }));
+}
 function selectionSentinels(config: SentinelConfig, seed: string): SelectionTrial[] {
   const random = rng(hashSeed(`${seed}:sentinel-selection`));
   return config.tests.test4.map((item) => {
@@ -468,10 +491,10 @@ function downloadForcedChoices(trials: ForcedChoiceTrial[], demographics: Demogr
   const completedAt = new Date().toISOString();
   saveCsv(columns, trials.map((t, i) => [metadata.participantId, metadata.sessionId, 'forcedChoice', inhouse, assignedBatch, metadata.startedAt, completedAt, i + 1, t.trial_id, Boolean(t.isSentinel), t.sentinelId ?? '', t.assignmentSet ?? '', t.difficulty_level, t.reference.image_id, t.reference.image_path, t.options[0].image_id, t.options[0].image_path, t.options[1].image_id, t.options[1].image_path, t.selectedOption, t.responseTimeMs ?? 0, ...demographicsCells(demographics, skipped, inhouse), metadata.screenWidth, metadata.screenHeight, metadata.userAgent]), metadata, 'forcedChoice');
 }
-function downloadSceneMatches(trials: SceneMatchingTrial[], demographics: Demographics, skipped: boolean, metadata: SessionMetadata, inhouse = false, assignedBatch = '') {
+function downloadSceneMatches(trials: SceneMatchingTrial[], demographics: Demographics, skipped: boolean, metadata: SessionMetadata, inhouse = false, assignedBatch = '', type: 'sceneMatching' | 'contextMatching2' = 'sceneMatching') {
   const columns = ['participant_id', 'session_id', 'study_type', 'inhouse', 'assigned_batch', 'study_started_at', 'completed_at', 'trial_number', 'trial_id', 'is_sentinel', 'sentinel_id', 'assignment_set', 'shared_factor', 'target_label', 'first_scene_image_ids_json', 'second_scene_image_ids_json', 'selected_option', 'response_time_ms', ...demographicColumns(inhouse), 'screen_width', 'screen_height', 'user_agent'];
   const completedAt = new Date().toISOString();
-  saveCsv(columns, trials.map((t, i) => [metadata.participantId, metadata.sessionId, 'sceneMatching', inhouse, assignedBatch, metadata.startedAt, completedAt, i + 1, t.trial_id, Boolean(t.isSentinel), t.sentinelId ?? '', t.assignmentSet ?? '', t.shared_factor, t.target_label, JSON.stringify(t.first_scene.map((image) => image.image_id)), JSON.stringify(t.second_scene.map((image) => image.image_id)), t.selectedOption, t.responseTimeMs ?? 0, ...demographicsCells(demographics, skipped, inhouse), metadata.screenWidth, metadata.screenHeight, metadata.userAgent]), metadata, 'sceneMatching');
+  saveCsv(columns, trials.map((t, i) => [metadata.participantId, metadata.sessionId, type, inhouse, assignedBatch, metadata.startedAt, completedAt, i + 1, t.trial_id, Boolean(t.isSentinel), t.sentinelId ?? '', t.assignmentSet ?? '', t.shared_factor, t.target_label, JSON.stringify(t.first_scene.map((image) => image.image_id)), JSON.stringify(t.second_scene.map((image) => image.image_id)), t.selectedOption, t.responseTimeMs ?? 0, ...demographicsCells(demographics, skipped, inhouse), metadata.screenWidth, metadata.screenHeight, metadata.userAgent]), metadata, type);
 }
 function downloadSets(trials: SelectionTrial[], demographics: Demographics, skipped: boolean, metadata: SessionMetadata, inhouse = false, assignedBatch = '') {
   const columns = ['participant_id', 'session_id', 'study_type', 'inhouse', 'assigned_batch', 'study_started_at', 'completed_at', 'trial_number', 'trial_id', 'is_sentinel', 'sentinel_id', 'assignment_set', 'reference_image_id', 'reference_image_path', 'candidate_order_json', 'selected_candidate_ids_json', 'selected_count', 'response_time_ms', ...demographicColumns(inhouse), 'screen_width', 'screen_height', 'user_agent'];
@@ -488,7 +511,7 @@ function submissionTrials(type: StudyType, pairs: PairTrial[], forced: ForcedCho
     trialNumber: index + 1, trialId: trial.trial_id, responseTimeMs: trial.responseTimeMs ?? 0, isSentinel: Boolean(trial.isSentinel), sentinelId: trial.sentinelId,
     response: { assignmentSet: trial.assignmentSet, difficultyLevel: trial.difficulty_level, reference: trial.reference, options: trial.options, selectedOption: trial.selectedOption },
   }));
-  if (type === 'sceneMatching') return scenes.map((trial, index) => ({
+  if (isSceneStudy(type)) return scenes.map((trial, index) => ({
     trialNumber: index + 1, trialId: trial.trial_id, responseTimeMs: trial.responseTimeMs ?? 0, isSentinel: Boolean(trial.isSentinel), sentinelId: trial.sentinelId,
     response: { assignmentSet: trial.assignmentSet, difficultyLevel: trial.difficulty_level, sharedFactor: trial.shared_factor, targetLabel: trial.target_label, firstScene: trial.first_scene, secondScene: trial.second_scene, selectedOption: trial.selectedOption },
   }));
@@ -518,6 +541,9 @@ function sentinelFailed(type: StudyType, trial: SubmissionTrial) {
   }
   if (type === 'sceneMatching') {
     return Number(response.selectedOption) !== SCENE_SENTINEL_ANSWERS.get(trial.sentinelId ?? '');
+  }
+  if (type === 'contextMatching2') {
+    return Number(response.selectedOption) !== CONTEXT2_SENTINEL_ANSWERS.get(trial.sentinelId ?? '');
   }
   const candidates = Array.isArray(response.candidates)
     ? response.candidates as Array<{ candidate_id?: unknown; is_same_material?: unknown }>
@@ -563,7 +589,10 @@ function RelativeQuestion({ attribute, value, onChange }: { attribute: 'more glo
 }
 
 function CompositeSceneFigure({ image, labels, selectedOption, correctOption, showCorrectAnswer, onSelect, onZoom }: { image: SelectionImage; labels: string[]; selectedOption?: 1 | 2 | 3 | 4 | null; correctOption?: 1 | 2 | 3 | 4; showCorrectAnswer?: boolean; onSelect?: (option: 1 | 2 | 3 | 4) => void; onZoom: () => void }) {
-  const positions = labels.length === 3 ? [26.667, 50, 73.333] : labels.length === 1 ? [50] : labels.map((_, index) => (index + .5) * 100 / labels.length);
+  // Composite containers retain the Test-3 9:2 width so Scene 1 and Scene 2
+  // have identical displayed heights. The 7:2 Test-3.2 question strip is
+  // therefore centred inside it; these positions include that white margin.
+  const positions = labels.length === 3 ? [26.667, 50, 73.333] : labels.length === 2 ? [38.889, 61.111] : labels.length === 1 ? [50] : labels.map((_, index) => (index + .5) * 100 / labels.length);
   return <figure className="composite-scene-sample">
     <button className="composite-scene-image-button" onClick={onZoom}><ThumbnailImage path={selectionDisplayPath(image)} originalPath={image.image_path} alt="Material comparison scene" /></button>
     <div className="composite-scene-overlays" aria-hidden={!onSelect}>{labels.map((label, index) => {
@@ -616,9 +645,9 @@ export default function App() {
   const currentPair = pairTrials[index]; const currentForcedChoice = forcedChoiceTrials[index]; const currentSceneMatching = sceneMatchingTrials[index]; const currentSelection = selectionTrials[index];
   const correctPairAnswer = currentPair ? testingGroundTruth?.pairs[currentPair.pairId] : undefined;
   const correctForcedChoice = currentForcedChoice ? testingGroundTruth?.forced_choices[currentForcedChoice.trial_id] : undefined;
-  const correctSceneMatch = currentSceneMatching ? testingGroundTruth?.scene_matches[currentSceneMatching.trial_id] : undefined;
+  const correctSceneMatch = currentSceneMatching ? (studyType === 'contextMatching2' ? testingGroundTruth?.context_matches2[currentSceneMatching.trial_id] : testingGroundTruth?.scene_matches[currentSceneMatching.trial_id]) : undefined;
   const correctSelectionIds = new Set(currentSelection ? testingGroundTruth?.selections[currentSelection.trial_id] ?? [] : []);
-  const activeCount = studyType === 'selection' ? selectionTrials.length : studyType === 'sceneMatching' ? sceneMatchingTrials.length : studyType === 'forcedChoice' ? forcedChoiceTrials.length : pairTrials.length;
+  const activeCount = studyType === 'selection' ? selectionTrials.length : isSceneStudy(studyType) ? sceneMatchingTrials.length : studyType === 'forcedChoice' ? forcedChoiceTrials.length : pairTrials.length;
   const pairComplete = Boolean(currentPair && currentPair.sameMaterialLikelihood !== null && currentPair.glossChoice && currentPair.metalChoice);
 
   useEffect(() => {
@@ -671,11 +700,11 @@ export default function App() {
       if (saved.schemaVersion !== 1 || saved.studyType !== studyType || !Number.isInteger(saved.index) || Number(saved.index) < 0) return;
       const preparedIds = studyType === 'pairJudgment' ? pairTrials.map((trial) => trial.pairId)
         : studyType === 'forcedChoice' ? forcedChoiceTrials.map((trial) => trial.trial_id)
-          : studyType === 'sceneMatching' ? sceneMatchingTrials.map((trial) => trial.trial_id)
+          : isSceneStudy(studyType) ? sceneMatchingTrials.map((trial) => trial.trial_id)
             : selectionTrials.map((trial) => trial.trial_id);
       const restoredIds = studyType === 'pairJudgment' ? saved.pairTrials?.map((trial) => trial.pairId)
         : studyType === 'forcedChoice' ? saved.forcedChoiceTrials?.map((trial) => trial.trial_id)
-          : studyType === 'sceneMatching' ? saved.sceneMatchingTrials?.map((trial) => trial.trial_id)
+          : isSceneStudy(studyType) ? saved.sceneMatchingTrials?.map((trial) => trial.trial_id)
             : saved.selectionTrials?.map((trial) => trial.trial_id);
       if (!restoredIds?.length || restoredIds.length !== preparedIds.length || new Set(restoredIds).size !== restoredIds.length || restoredIds.some((id) => !preparedIds.includes(id))) return;
       if (saved.pairTrials) setPairTrials(saved.pairTrials);
@@ -714,7 +743,7 @@ export default function App() {
     void preloadStudyImages(paths).catch((cause) => console.warn('A look-ahead thumbnail could not be preloaded after retries.', cause));
   }, [stage, studyType, index]);
   useEffect(() => {
-    if (stage !== 'study' || studyType !== 'sceneMatching') return;
+    if (stage !== 'study' || !isSceneStudy(studyType)) return;
     const paths = sceneMatchingTrials.slice(index, index + 3).flatMap((trial) => [...trial.first_scene, ...trial.second_scene].map(selectionDisplayPath));
     void preloadStudyImages(paths).catch((cause) => console.warn('An in-context thumbnail could not be preloaded after retries.', cause));
   }, [stage, studyType, index, sceneMatchingTrials]);
@@ -751,6 +780,9 @@ export default function App() {
       if (sampleMode && serviceStatus?.sentinelScreeningVersion !== availableSentinelConfig.screening_version) {
         throw new Error('The preview/testing configuration is out of sync with the active study service. Please update the deployment before continuing.');
       }
+      if (sampleMode && type === 'contextMatching2' && !serviceStatus?.studyTypes?.includes('contextMatching2')) {
+        throw new Error('The active study service does not support Test 3.2 yet. Deploy the updated Worker before previewing this test.');
+      }
       if (!sampleMode && authSession?.sentinelScreeningVersion !== availableSentinelConfig.screening_version) {
         throw new Error('The study configuration is temporarily out of sync. Please contact the study organiser before continuing.');
       }
@@ -778,6 +810,17 @@ export default function App() {
         if (fixedAssignment) selected = selected.map((trial) => ({ ...trial, assignmentSet: fixedAssignment.setId }));
         const paths = selected.slice(0, 1).flatMap((trial) => [trial.reference.image_path, ...trial.options.map((option) => option.image_path)]);
         await preloadStudyImages(paths); if (requestId !== preparationId.current) return; setForcedChoiceTrials(selected);
+      } else if (type === 'contextMatching2') {
+        const response = await fetch(manifestUrl('context_matching2_trials.json'), { cache: 'no-store' });
+        if (!response.ok) throw new Error('Two-option contextual trials are unavailable.');
+        const payload = await response.json() as { trials: SceneMatchingManifestTrial[] };
+        const requested = trialCount(type);
+        const fixedEntries = fixedRows(payload.trials, fixedAssignment.trialIds, (entry) => entry.trial_id);
+        let selected = sampleMode && requested < fixedAssignment.trialIds.length ? selectSceneMatches(fixedEntries, requested, sampleSeed) : materializeFixedSceneMatches(payload.trials, fixedAssignment, sampleSeed);
+        if (sentinelConfig) selected = insertSentinels(selected, contextMatching2Sentinels(sentinelConfig), sentinelConfig.positions);
+        selected = selected.map((trial) => ({ ...trial, assignmentSet: fixedAssignment.setId }));
+        const paths = selected.slice(0, 1).flatMap((trial) => [...trial.first_scene, ...trial.second_scene].map(selectionDisplayPath));
+        await preloadStudyImages(paths); if (requestId !== preparationId.current) return; setSceneMatchingTrials(selected); setTrainingExamples([]);
       } else if (type === 'sceneMatching') {
         const [response, trainingResponse] = await Promise.all([
           fetch(manifestUrl('scene_matching_trials.json'), { cache: 'no-store' }),
@@ -966,7 +1009,7 @@ export default function App() {
   }
   function downloadCurrent() {
     if (studyType === 'selection') downloadSets(selectionTrials, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
-    else if (studyType === 'sceneMatching') downloadSceneMatches(sceneMatchingTrials, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
+    else if (isSceneStudy(studyType)) downloadSceneMatches(sceneMatchingTrials, demographics, demographicsSkipped, metadata, inhouse, assignedBatch, studyType);
     else if (studyType === 'forcedChoice') downloadForcedChoices(forcedChoiceTrials, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
     else downloadPairs(pairTrials, pairTrainingAttempts, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
   }
@@ -1069,7 +1112,7 @@ export default function App() {
       const trial = nextForced[trialIndex];
       return trial ? [trial.reference.image_path, ...trial.options.map((option) => option.image_path)] : [];
     }
-    if (type === 'sceneMatching') {
+    if (isSceneStudy(type)) {
       const trial = nextScene[trialIndex];
       return trial ? [...trial.first_scene, ...trial.second_scene].map(selectionDisplayPath) : [];
     }
@@ -1100,7 +1143,7 @@ export default function App() {
     if (index === activeCount - 1) {
       if (directTesting || previewMode) {
         if (studyType === 'selection') downloadSets(nextSets, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
-        else if (studyType === 'sceneMatching') downloadSceneMatches(nextScene, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
+        else if (isSceneStudy(studyType)) downloadSceneMatches(nextScene, demographics, demographicsSkipped, metadata, inhouse, assignedBatch, studyType);
         else if (studyType === 'forcedChoice') downloadForcedChoices(nextForced, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
         else downloadPairs(nextPairs, pairTrainingAttempts, demographics, demographicsSkipped, metadata, inhouse, assignedBatch);
         setStage('complete');
@@ -1138,7 +1181,7 @@ export default function App() {
     const elapsed = Math.round(performance.now() - trialStartedAt.current);
     if (studyType === 'pairJudgment') setPairTrials((trials) => trials.map((trial, i) => i === index ? { ...trial, responseTimeMs: (trial.responseTimeMs ?? 0) + elapsed } : trial));
     else if (studyType === 'forcedChoice') setForcedChoiceTrials((trials) => trials.map((trial, i) => i === index ? { ...trial, responseTimeMs: (trial.responseTimeMs ?? 0) + elapsed } : trial));
-    else if (studyType === 'sceneMatching') setSceneMatchingTrials((trials) => trials.map((trial, i) => i === index ? { ...trial, responseTimeMs: (trial.responseTimeMs ?? 0) + elapsed } : trial));
+    else if (isSceneStudy(studyType)) setSceneMatchingTrials((trials) => trials.map((trial, i) => i === index ? { ...trial, responseTimeMs: (trial.responseTimeMs ?? 0) + elapsed } : trial));
     else if (studyType === 'selection') setSelectionTrials((trials) => trials.map((trial, i) => i === index ? { ...trial, responseTimeMs: (trial.responseTimeMs ?? 0) + elapsed } : trial));
     setIndex((value) => value - 1); setShowHelp(false); setShowCorrectAnswer(false); clearSelectionLimitNotice(); trialStartedAt.current = performance.now();
   }
@@ -1166,10 +1209,11 @@ export default function App() {
     <button className="test-choice-card" onClick={() => choose('pairJudgment')}><span className="test-number">1</span><SlidersHorizontal /><h2>{TEST_COPY.pairJudgment.title}</h2><p>{TEST_COPY.pairJudgment.detail}</p><strong>Identity, glossiness and metallicness</strong></button>
     <button className="test-choice-card" onClick={() => choose('forcedChoice')}><span className="test-number">2</span><ScanSearch /><h2>{TEST_COPY.forcedChoice.title}</h2><p>{TEST_COPY.forcedChoice.detail}</p><strong>One reference + two alternatives</strong></button>
     <button className="test-choice-card" onClick={() => choose('sceneMatching')}><span className="test-number">3</span><Shuffle /><h2>{TEST_COPY.sceneMatching.title}</h2><p>{TEST_COPY.sceneMatching.detail}</p><strong>One reference + three candidates</strong></button>
+    <button className="test-choice-card" onClick={() => choose('contextMatching2')}><span className="test-number">3.2</span><Shuffle /><h2>{TEST_COPY.contextMatching2.title}</h2><p>{TEST_COPY.contextMatching2.detail}</p><strong>One reference + two candidates</strong></button>
     <button className="test-choice-card" onClick={() => choose('selection')}><span className="test-number">4</span><Images /><h2>{TEST_COPY.selection.title}</h2><p>{TEST_COPY.selection.detail}</p><strong>One reference + 6 candidates</strong></button>
   </div><div className="explanation-actions"><Button variant="ghost" size="lg" onClick={() => setStage('explanation')}><ArrowLeft /> Back</Button></div></section></main>;
 
-  if (stage === 'instructions' && studyType) return <main className="study-shell tutorial-shell"><header className="page-header"><div><span className="brand-dot" /> {TEST_COPY[studyType].title} test</div><span>{inhouse ? `Test ${inhouseTaskIndex + 1} of ${INHOUSE_STUDY_ORDER.length}` : 'Instructions'}</span></header><section className="tutorial-content task-instructions-content"><div className="tutorial-heading"><h1>{TEST_COPY[studyType].title}</h1><p>{TEST_COPY[studyType].detail}</p></div><div className="selected-test-instructions"><h2>{studyType === 'selection' ? 'Select every matching candidate' : studyType === 'sceneMatching' ? 'Track one material across two scenes' : 'Compare materials, not scenes'}</h2>{studyType === 'forcedChoice' && <p>Select the image (A or B) showing an object made of the same material as the reference image. Please note that the object shape and the illumination may be different across the images. Try to focus on the material</p>}{studyType === 'pairJudgment' && <><p>For every pair, answer all three questions:</p><ol><li>Do objects in A and B look like they are made of the same material?</li><li>Which object appears more glossy?</li><li>Which object appears more metallic?</li></ol><p>Please answer all three questions for every trial: in some cases, you may think that two objects seem to be made of the same material, but may be perceived differently in terms of glossiness/metallicness. Choose “Approximately same” when neither object appears more glossy or more metallic.</p><p>You will begin with three training examples. You must answer all three questions correctly in each example before continuing.</p></>}{studyType === 'sceneMatching' && <><p>Scene 1 contains one reference object and two contextual probes. Scene 2 contains three numbered candidates and two contextual probes made from the same respective materials as the probes in Scene 1. Find the candidate made of the same material as the reference.</p><p>You will begin with four training examples. These answers are not recorded.</p><ul><li>Only geometry or illumination changes between scenes.</li><li>The lateral probes provide additional information about that change.</li><li>Focus on material identity rather than direct pixel similarity.</li></ul></>}{studyType === 'selection' && <><p>The reference appears on the left and 6 candidates appear in a 2 × 3 grid. One or two candidates may have the same material as the reference.</p><ul><li>Select <u>up to two</u> candidates that appear to match the reference.</li><li>A highlighted border and check mark indicate selection.</li><li>Click a selected image again to deselect it.</li><li>Shape and illumination can differ substantially.</li></ul></>}</div><div className="preload-status">{preparing ? <LoaderCircle className="is-spinning" /> : prepared ? <Check /> : <CircleHelp />}<div><strong>{prepared ? 'Images ready' : preparing ? 'Preparing study images' : 'Study not ready'}</strong><span>{preparing ? 'Please wait while the images are prepared.' : prepared ? 'You can start the test.' : error}</span></div>{error && <Button variant="outline" onClick={() => void prepare(studyType)}>Try again</Button>}</div><div className="explanation-actions">{!(inhouse && inhouseTaskIndex > 0) && <Button variant="ghost" size="lg" onClick={() => setStage(assignedStudyType ? 'explanation' : 'chooser')}><ArrowLeft /> {assignedStudyType ? 'Back to guide' : 'Choose another test'}</Button>}<Button size="lg" disabled={!prepared || preparing} onClick={start}>Start test <ArrowRight /></Button></div></section></main>;
+  if (stage === 'instructions' && studyType) return <main className="study-shell tutorial-shell"><header className="page-header"><div><span className="brand-dot" /> {TEST_COPY[studyType].title} test</div><span>{inhouse ? `Test ${inhouseTaskIndex + 1} of ${INHOUSE_STUDY_ORDER.length}` : 'Instructions'}</span></header><section className="tutorial-content task-instructions-content"><div className="tutorial-heading"><h1>{TEST_COPY[studyType].title}</h1><p>{TEST_COPY[studyType].detail}</p></div><div className="selected-test-instructions"><h2>{studyType === 'selection' ? 'Select every matching candidate' : isSceneStudy(studyType) ? 'Track one material across two scenes' : 'Compare materials, not scenes'}</h2>{studyType === 'forcedChoice' && <p>Select the image (A or B) showing an object made of the same material as the reference image. Please note that the object shape and the illumination may be different across the images. Try to focus on the material</p>}{studyType === 'pairJudgment' && <><p>For every pair, answer all three questions:</p><ol><li>Do objects in A and B look like they are made of the same material?</li><li>Which object appears more glossy?</li><li>Which object appears more metallic?</li></ol><p>Please answer all three questions for every trial: in some cases, you may think that two objects seem to be made of the same material, but may be perceived differently in terms of glossiness/metallicness. Choose “Approximately same” when neither object appears more glossy or more metallic.</p><p>You will begin with three training examples. You must answer all three questions correctly in each example before continuing.</p></>}{studyType === 'sceneMatching' && <><p>Scene 1 contains one reference object and two contextual probes. Scene 2 contains three numbered candidates and two contextual probes made from the same respective materials as the probes in Scene 1. Find the candidate made of the same material as the reference.</p><p>You will begin with four training examples. These answers are not recorded.</p><ul><li>Only geometry or illumination changes between scenes.</li><li>The lateral probes provide additional information about that change.</li><li>Focus on material identity rather than direct pixel similarity.</li></ul></>}{studyType === 'contextMatching2' && <><p>Scene 1 contains one reference object and two contextual probes. Scene 2 contains two numbered candidates and the corresponding probes. These are exactly the same alternatives used in reference matching; use the extra context to find the candidate made of the same material as the reference.</p><ul><li>Only geometry or illumination changes between scenes.</li><li>The lateral probes provide additional information about that change.</li><li>Focus on material identity rather than direct pixel similarity.</li></ul></>}{studyType === 'selection' && <><p>The reference appears on the left and 6 candidates appear in a 2 × 3 grid. One or two candidates may have the same material as the reference.</p><ul><li>Select <u>up to two</u> candidates that appear to match the reference.</li><li>A highlighted border and check mark indicate selection.</li><li>Click a selected image again to deselect it.</li><li>Shape and illumination can differ substantially.</li></ul></>}</div><div className="preload-status">{preparing ? <LoaderCircle className="is-spinning" /> : prepared ? <Check /> : <CircleHelp />}<div><strong>{prepared ? 'Images ready' : preparing ? 'Preparing study images' : 'Study not ready'}</strong><span>{preparing ? 'Please wait while the images are prepared.' : prepared ? 'You can start the test.' : error}</span></div>{error && <Button variant="outline" onClick={() => void prepare(studyType)}>Try again</Button>}</div><div className="explanation-actions">{!(inhouse && inhouseTaskIndex > 0) && <Button variant="ghost" size="lg" onClick={() => setStage(assignedStudyType ? 'explanation' : 'chooser')}><ArrowLeft /> {assignedStudyType ? 'Back to guide' : 'Choose another test'}</Button>}<Button size="lg" disabled={!prepared || preparing} onClick={start}>Start test <ArrowRight /></Button></div></section></main>;
 
   if (stage === 'submitting') return <main className="study-shell complete-shell"><section className="complete-card submission-card">{!submissionError ? <><LoaderCircle className="submission-spinner is-spinning" /><p className="eyebrow">Saving responses</p><h1>Please wait</h1><p className="lead">{inhouse && inhouseTaskIndex < INHOUSE_STUDY_ORDER.length - 1 ? `We are securely storing test ${inhouseTaskIndex + 1} before loading the next one.` : 'We are securely storing your completed study. Do not close this page.'}</p></> : <><CircleHelp className="submission-error-icon" /><p className="eyebrow">Upload not confirmed</p><h1>Your responses are still safe in this browser</h1><p className="lead" role="alert">{submissionError}</p><p className="submission-help">Keep this page open and try the upload again. You may also download a local backup, but the study will only be marked complete after Cloudflare confirms the full response set.</p><div className="complete-actions"><Button disabled={!pendingSubmission} onClick={() => pendingSubmission && void uploadSubmission(pendingSubmission)}>Try upload again</Button><Button variant="outline" onClick={downloadCurrent}><Download /> Download backup CSV</Button></div></>}</section></main>;
 
@@ -1207,11 +1251,12 @@ export default function App() {
   const progress = (index + 1) / activeCount * 100;
   if (studyType === 'forcedChoice' && currentForcedChoice) return <main className="study-shell constancy-study-shell"><header className="trial-header"><div><span className="brand-dot" /> {TEST_COPY.forcedChoice.title} test</div><div className="trial-header-actions"><span>Trial {index + 1} of {activeCount}</span><TestingAnswerButton visible={directTesting} ready={Boolean(testingGroundTruth)} shown={showCorrectAnswer} onToggle={() => setShowCorrectAnswer((value) => !value)} /></div></header><Progress className="study-progress" value={progress} /><section className="reference-trial-layout"><div className="reference-heading"><h1>Which image shows the same material as the reference?</h1><p>Select the image (A or B) showing an object made of the same material as the reference image. Please note that the object shape and the illumination may be different across the images. Try to focus on the material.</p></div><div className="reference-workspace"><figure className="reference-sample"><button onClick={() => setLightboxPath(currentForcedChoice.reference.image_path)}><ThumbnailImage path={currentForcedChoice.reference.image_path} alt="Reference material" /></button><figcaption>Reference</figcaption></figure><div className="candidate-grid forced-choice-grid">{currentForcedChoice.options.map((option, optionIndex) => { const label = optionIndex === 0 ? 'A' : 'B'; const selected = currentForcedChoice.selectedOption === label; return <button key={option.image_id} className="candidate-card forced-choice-card" data-selected={selected || undefined} data-correct={showCorrectAnswer && correctForcedChoice === label || undefined} aria-pressed={selected} onClick={() => setForcedChoiceTrials((all) => all.map((trial, i) => i === index ? { ...trial, selectedOption: label } : trial))}><ThumbnailImage path={option.image_path} alt={`Option ${label}`} /><span>{label}</span>{selected && <span className="candidate-check"><Check /></span>}</button>; })}</div></div></section><footer className="constancy-actions"><Button variant="ghost" disabled={!index} onClick={previous}><ArrowLeft /> Back</Button><Button disabled={!currentForcedChoice.selectedOption} onClick={nextForcedChoice}>{index === activeCount - 1 ? 'Finish test' : 'Next trial'} <ArrowRight /></Button></footer>{lightboxPath && <button className="image-lightbox" onClick={() => setLightboxPath('')}><img src={stimulusUrl(lightboxPath)} alt="Enlarged reference" /><span>Click to close</span></button>}</main>;
 
-  if (studyType === 'sceneMatching' && currentSceneMatching) {
+  if (isSceneStudy(studyType) && currentSceneMatching) {
     const compositeScene = currentSceneMatching.first_scene.length === 1 && currentSceneMatching.second_scene.length === 1;
-    return <main className="study-shell constancy-study-shell scene-matching-study-shell"><header className="trial-header"><div><span className="brand-dot" /> {TEST_COPY.sceneMatching.title} test</div><div className="trial-header-actions"><span>Trial {index + 1} of {activeCount}</span><TestingAnswerButton visible={directTesting} ready={Boolean(testingGroundTruth)} shown={showCorrectAnswer} onToggle={() => setShowCorrectAnswer((value) => !value)} /></div></header><Progress className="study-progress" value={progress} /><section className="scene-matching-layout"><div className="scene-matching-heading"><h1>Which object in Scene 2 has the same material as the reference R?</h1><p>Select which object from Scene 2 (1, 2, or 3) is made from the same material as R in Scene 1.</p></div>{compositeScene ? <div className="composite-scenes-card">
+    const optionLabels = studyType === 'contextMatching2' ? ['1', '2'] : ['1', '2', '3'];
+    return <main className="study-shell constancy-study-shell scene-matching-study-shell"><header className="trial-header"><div><span className="brand-dot" /> {TEST_COPY[studyType].title} test</div><div className="trial-header-actions"><span>Trial {index + 1} of {activeCount}</span><TestingAnswerButton visible={directTesting} ready={Boolean(testingGroundTruth)} shown={showCorrectAnswer} onToggle={() => setShowCorrectAnswer((value) => !value)} /></div></header><Progress className="study-progress" value={progress} /><section className="scene-matching-layout"><div className="scene-matching-heading"><h1>Which object in Scene 2 has the same material as the reference R?</h1><p>Select which object from Scene 2 ({studyType === 'contextMatching2' ? '1 or 2' : '1, 2, or 3'}) is made from the same material as R in Scene 1.</p></div>{compositeScene ? <div className="composite-scenes-card">
       <div className="scene-strip scene-strip-composite"><div className="scene-strip-label"><strong>Scene 1</strong><span>Reference</span></div><CompositeSceneFigure image={currentSceneMatching.first_scene[0]} labels={['R']} onZoom={() => setLightboxPath(currentSceneMatching.first_scene[0].image_path)} /></div>
-      <div className="scene-strip scene-strip-composite"><div className="scene-strip-label"><strong>Scene 2</strong><span>Choose one</span></div><CompositeSceneFigure image={currentSceneMatching.second_scene[0]} labels={['1', '2', '3']} selectedOption={currentSceneMatching.selectedOption} correctOption={correctSceneMatch} showCorrectAnswer={showCorrectAnswer} onSelect={(option) => setSceneMatchingTrials((all) => all.map((trial, i) => i === index ? { ...trial, selectedOption: option } : trial))} onZoom={() => setLightboxPath(currentSceneMatching.second_scene[0].image_path)} /></div>
+      <div className="scene-strip scene-strip-composite"><div className="scene-strip-label"><strong>Scene 2</strong><span>Choose one</span></div><CompositeSceneFigure image={currentSceneMatching.second_scene[0]} labels={optionLabels} selectedOption={currentSceneMatching.selectedOption} correctOption={correctSceneMatch} showCorrectAnswer={showCorrectAnswer} onSelect={(option) => setSceneMatchingTrials((all) => all.map((trial, i) => i === index ? { ...trial, selectedOption: option } : trial))} onZoom={() => setLightboxPath(currentSceneMatching.second_scene[0].image_path)} /></div>
     </div> : <>
       <div className="scene-strip"><div className="scene-strip-label"><strong>Scene 1</strong><span>Reference objects</span></div>{currentSceneMatching.first_scene.map((image, imageIndex) => <figure key={image.image_id} className={"scene-sample " + (`${'ABCD'[imageIndex]}` === currentSceneMatching.target_label ? 'is-target' : '')}><button onClick={() => setLightboxPath(image.image_path)}><ThumbnailImage path={selectionDisplayPath(image)} originalPath={image.image_path} alt={`Object ${'ABCD'[imageIndex]}`} /></button><figcaption>{'ABCD'[imageIndex]}</figcaption></figure>)}</div>
       <div className="scene-strip"><div className="scene-strip-label"><strong>Scene 2</strong><span>Choose one</span></div>{currentSceneMatching.second_scene.map((image, imageIndex) => { const option = (imageIndex + 1) as 1 | 2 | 3 | 4; const selected = currentSceneMatching.selectedOption === option; return <button key={image.image_id} className="scene-sample scene-option" data-selected={selected || undefined} data-correct={showCorrectAnswer && correctSceneMatch === option || undefined} aria-pressed={selected} onClick={() => setSceneMatchingTrials((all) => all.map((trial, i) => i === index ? { ...trial, selectedOption: option } : trial))}><ThumbnailImage path={selectionDisplayPath(image)} originalPath={image.image_path} alt={`Option ${option}`} /><span>{option}</span>{selected && <span className="candidate-check"><Check /></span>}</button>; })}</div>

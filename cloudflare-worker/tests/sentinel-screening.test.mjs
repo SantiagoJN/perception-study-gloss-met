@@ -84,6 +84,15 @@ test('one failed sentinel remains below the attention-screening threshold', () =
   assert.equal(screening.failures >= sentinelScreenOutThreshold('sceneMatching'), false);
 });
 
+test('Test 3.2 uses its own two-option sentinel answer key', () => {
+  const screening = evaluateSentinels('contextMatching2', [
+    trial('SENTINEL_T32_01', { selectedOption: 1 }),
+    trial('SENTINEL_T32_02', { selectedOption: 1 }),
+  ]);
+  assert.deepEqual(screening, { sentinels: 2, checks: 2, failures: 1 });
+  assert.equal(screening.failures >= sentinelScreenOutThreshold('contextMatching2'), false);
+});
+
 test('Test 4 allows two failed sentinels and screens out on the third', () => {
   const twoFailures = evaluateSentinels('selection', [
     trial('SENTINEL_T4_01', { selectedCandidateIds: [] }),

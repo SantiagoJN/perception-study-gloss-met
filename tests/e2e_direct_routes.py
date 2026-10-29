@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 from e2e_study import ChromePage, PROJECT, free_ports, wait_http
 
 
-ROUTES = ("test1_pair_comparison", "test2_2afc", "test3_matching", "test4_mm")
+ROUTES = ("test1_pair_comparison", "test2_2afc", "test3_matching", "test3.2_matching2", "test4_mm")
 
 
 def main() -> None:
@@ -49,6 +49,12 @@ def main() -> None:
                 "source": """
                     delete Array.prototype.at;
                     try { Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true }); } catch (_) {}
+                    let localStudyConfig = {};
+                    Object.defineProperty(window, 'USER_STUDY_CONFIG', {
+                      configurable: true,
+                      get: () => localStudyConfig,
+                      set: (value) => { localStudyConfig = { ...value, stimulusBaseUrl: '', apiBaseUrl: '' }; },
+                    });
                     const originalFetch = globalThis.fetch.bind(globalThis);
                     globalThis.fetch = async (input, init) => {
                       if (String(input).endsWith('/health')) {
@@ -57,6 +63,7 @@ def main() -> None:
                           service: 'perception-study-api',
                           database: 'connected',
                           sentinelScreeningVersion: '2026-10-23.1',
+                          studyTypes: ['pairJudgment', 'forcedChoice', 'sceneMatching', 'contextMatching2', 'selection'],
                         }), { status: 200, headers: { 'Content-Type': 'application/json' } });
                       }
                       if (String(input).includes('/api/v1/anonymous-login')) {
@@ -101,7 +108,12 @@ def main() -> None:
                     assert not exceptions, f"Runtime exception on /{suffix}: {exceptions[-1]}"
 
             page.navigate(f"{base}/testing/?trials=8")
-            page.wait("document.querySelectorAll('.test-choice-card').length === 4")
+            page.wait("document.querySelectorAll('.test-choice-card').length === 5")
+            page.evaluate("document.querySelectorAll('.test-choice-card')[3].click()")
+            page.wait("[...document.querySelectorAll('button')].some(button => button.textContent.includes('Start test') && !button.disabled)", timeout=30)
+            page.evaluate("[...document.querySelectorAll('button')].find(button => button.textContent.includes('Start test')).click()")
+            page.wait("document.querySelectorAll('.composite-scene-label:not(:disabled)').length === 2")
+            assert page.evaluate("document.body.innerText.includes('1 or 2')")
 
             traversal = Request(base + "/%2e%2e/server.py")
             try:

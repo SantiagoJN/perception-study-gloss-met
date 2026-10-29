@@ -40,7 +40,7 @@ def main() -> None:
     assert "r2.dev" not in lowered, "Production artifact still uses r2.dev"
     assert re.search(r"stimulusBaseUrl[^\n]+https://", config), "Production stimulus URL is missing"
     testing_answers = json.loads((root / "testing_ground_truth.json").read_text(encoding="utf-8"))
-    assert set(testing_answers) == {"pairs", "forced_choices", "scene_matches", "selections"}
+    assert set(testing_answers) == {"pairs", "forced_choices", "scene_matches", "context_matches2", "selections"}
     assert all(len(answers) == 600 for answers in testing_answers.values()), "Incomplete public testing answers"
 
     for trial in trials(root, "forced_choice_trials.json"):
@@ -51,6 +51,12 @@ def main() -> None:
 
     for trial in trials(root, "scene_matching_trials.json"):
         assert "correct_option" not in trial
+        for image in [*trial["first_scene"], *trial["second_scene"]]:
+            assert_clean_image(image, trial["trial_id"])
+
+    for trial in trials(root, "context_matching2_trials.json"):
+        assert "correct_option" not in trial
+        assert "source_test2_trial_id" not in trial
         for image in [*trial["first_scene"], *trial["second_scene"]]:
             assert_clean_image(image, trial["trial_id"])
 

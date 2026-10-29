@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 PUBLIC = Path(__file__).resolve().parents[1] / "public"
-TEST_KEYS = {f"test{index}" for index in range(1, 5)}
+TEST_KEYS = {"test1", "test2", "test3", "test3_2", "test4"}
 
 
 def entries(filename: str) -> dict[str, str]:
@@ -20,7 +20,7 @@ def entries(filename: str) -> dict[str, str]:
         key, separator, value = line.partition("=")
         assert separator and key.strip() and value.strip(), f"Malformed {filename} line: {raw_line!r}"
         result[key.strip()] = value.strip()
-    assert set(result) == TEST_KEYS, f"{filename} must define exactly test1..test4"
+    assert set(result) == TEST_KEYS, f"{filename} must define all five study tests"
     return result
 
 
@@ -36,7 +36,7 @@ def main() -> None:
             assert parsed.scheme == "https" and parsed.netloc, f"Invalid {outcome} redirect for {key}"
             redirect_code = parse_qs(parsed.query).get("cc", [""])[0]
             assert redirect_code == code, f"{outcome} redirect/code mismatch for {key}"
-    print("Deployment configuration valid: four completion and four screen-out destinations.")
+    print("Deployment configuration valid: five completion and five screen-out destinations.")
 
 
 if __name__ == "__main__":

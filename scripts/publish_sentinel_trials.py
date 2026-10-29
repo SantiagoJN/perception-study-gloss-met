@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and publish the fixed sentinel configuration for all four tests."""
+"""Validate and publish the fixed sentinel configuration for all tests."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 ROOT = PROJECT.parent
 SOURCE = PROJECT / "stimulus_generation" / "sentinels" / "config.json"
 OUTPUT = PROJECT / "public" / "sentinel_trials.json"
+TEST32_SETUPS = ROOT / "datasetv9" / "groups3" / "sentinels" / "setups.json"
 POSITIONS = [2, 4, 8, 12, 15]
 
 
@@ -49,8 +50,8 @@ def validate(payload: dict[str, Any]) -> None:
     if payload.get("positions") != POSITIONS:
         raise ValueError(f"Sentinel positions must be {POSITIONS}")
     tests = payload.get("tests", {})
-    if set(tests) != {"test1", "test2", "test3", "test4"}:
-        raise ValueError("Sentinel configuration must define tests 1--4")
+    if set(tests) != {"test1", "test2", "test3", "test3_2", "test4"}:
+        raise ValueError("Sentinel configuration must define all five tests")
     for name, setups in tests.items():
         if len(setups) != 5:
             raise ValueError(f"{name} must contain exactly five sentinels")
@@ -85,6 +86,14 @@ def validate(payload: dict[str, Any]) -> None:
         if setup["correct_option"] not in {1, 2, 3}:
             raise ValueError(f"Invalid correct option in {setup['sentinel_id']}")
 
+    for setup in tests["test3_2"]:
+        assert_image(setup["reference_scene"])
+        assert_image(setup["question_scene"])
+        if setup["shared_factor"] not in {"geometry", "illumination"}:
+            raise ValueError(f"Invalid shared factor in {setup['sentinel_id']}")
+        if setup["correct_option"] not in {1, 2}:
+            raise ValueError(f"Invalid correct option in {setup['sentinel_id']}")
+
     for setup in tests["test4"]:
         assert_image(setup["reference"])
         candidates = setup["candidates"]
@@ -108,6 +117,14 @@ def validate(payload: dict[str, Any]) -> None:
 
 def main() -> None:
     payload = json.loads(SOURCE.read_text(encoding="utf-8"))
+    test32 = json.loads(TEST32_SETUPS.read_text(encoding="utf-8"))["setups"]
+    payload["tests"]["test3_2"] = [{
+        "sentinel_id": setup["sentinel_id"],
+        "reference_scene": setup["reference_scene"],
+        "question_scene": setup["question_scene"],
+        "shared_factor": setup["shared_factor"],
+        "correct_option": setup["correct_option"],
+    } for setup in test32]
     validate(payload)
     temporary = OUTPUT.with_suffix(".json.part")
     temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

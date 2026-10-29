@@ -104,8 +104,8 @@ class ChromePage:
 
 def open_testing_chooser(page: ChromePage, base_url: str, trials: int) -> None:
     page.navigate(f"{base_url}testing/?trials={trials}")
-    page.wait("document.querySelector('h1')?.textContent.includes('Visual Perception Study') || document.querySelectorAll('.test-choice-card').length === 4")
-    if page.evaluate("document.querySelectorAll('.test-choice-card').length === 4"):
+    page.wait("document.querySelector('h1')?.textContent.includes('Visual Perception Study') || document.querySelectorAll('.test-choice-card').length === 5")
+    if page.evaluate("document.querySelectorAll('.test-choice-card').length === 5"):
         return
     page.evaluate("document.querySelector('[role=checkbox]').click()")
     page.click_text("button", "Continue")
@@ -113,7 +113,7 @@ def open_testing_chooser(page: ChromePage, base_url: str, trials: int) -> None:
     page.click_text("button", "Skip for testing")
     page.wait("document.querySelector('h1')?.textContent.includes('Glossiness and metallicness')")
     page.click_text("button", "Choose a test")
-    page.wait("document.querySelectorAll('.test-choice-card').length === 4")
+    page.wait("document.querySelectorAll('.test-choice-card').length === 5")
 
 
 def assert_trial_fits(page: ChromePage, label: str) -> None:
@@ -146,7 +146,7 @@ def run_checks(page: ChromePage, base_url: str) -> None:
     page.click_text("button", "Continue")
     page.wait("document.querySelector('h1')?.textContent.includes('Glossiness and metallicness')")
     page.click_text("button", "Choose a test")
-    page.wait("document.querySelectorAll('.test-choice-card').length === 4")
+    page.wait("document.querySelectorAll('.test-choice-card').length === 5")
     page.evaluate("document.querySelectorAll('.test-choice-card')[1].click()")
     page.wait("[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Start test')&&!b.disabled)", timeout=30)
     assert page.evaluate("window.__healthRequests >= 1"), "Preview did not verify the live Worker/D1 health endpoint"
@@ -328,7 +328,7 @@ def run_checks(page: ChromePage, base_url: str) -> None:
 
     page.evaluate("localStorage.clear()")
     open_testing_chooser(page, base_url, 4)
-    page.evaluate("document.querySelectorAll('.test-choice-card')[3].click()")
+    page.evaluate("document.querySelectorAll('.test-choice-card')[4].click()")
     page.wait("[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Start test')&&!b.disabled)", timeout=30)
     page.click_text("button", "Start test")
     page.wait("document.querySelectorAll('.selection-candidate').length === 6")
@@ -409,7 +409,7 @@ def main() -> None:
                     const url = typeof input === 'string' ? input : input.url;
                     if (url.endsWith('/health')) {
                       window.__healthRequests += 1;
-                      return Promise.resolve(new Response(JSON.stringify({ ok: true, service: 'perception-study-api', database: 'connected', sentinelScreeningVersion: '2026-10-23.1' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+                      return Promise.resolve(new Response(JSON.stringify({ ok: true, service: 'perception-study-api', database: 'connected', sentinelScreeningVersion: '2026-10-23.1', studyTypes: ['pairJudgment', 'forcedChoice', 'sceneMatching', 'contextMatching2', 'selection'] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
                     }
                     if (url.endsWith('/api/v1/login')) {
                       const body = JSON.parse(init.body);

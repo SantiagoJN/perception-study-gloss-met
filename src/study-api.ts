@@ -56,6 +56,7 @@ export type StudyServiceStatus = {
   service: string;
   database: 'connected';
   sentinelScreeningVersion: string;
+  studyTypes?: string[];
 };
 
 export type SubmissionTrial = {

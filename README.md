@@ -24,6 +24,8 @@ a chooser for one independent task:
    option A on the left and option B on the right;
 3. in-context matching between two groups that share either geometry or
    illumination, with that condition changed between groups;
+3.2. two-option in-context matching: the exact Test-2 reference and A/B
+   alternatives, embedded in the contextual probe scenes used by Test 3;
 4. multiple matching: selection of up to two same-material images from a
    6-candidate, 2 x 3 grid. Setup sampling and the current candidate banks
    remain unchanged; the UI temporarily shows six shuffled candidates per setup.
@@ -63,7 +65,7 @@ also stored with every D1 response. Sentinels are never inserted in
 A sentinel is failed when any of its evaluated component responses is incorrect.
 Test 1 always checks material identity and checks the configured appearance
 attribute(s); unevaluated glossiness or metallicness responses are still stored but
-do not affect screening. Tests 2 and 3 check their single forced choice; Test 4
+do not affect screening. Tests 2, 3 and 3.2 check their single forced choice; Test 4
 checks the selected/not-selected state of all six candidates. Tests 1–3 are
 screened out immediately after the second failed
 sentinel. Test 4 permits two failed sentinels and screens out after the third.
@@ -127,6 +129,7 @@ attribute aligned across the rows. The public copies live in `public/tutorial`.
 | `/test1_pair_comparison` | Pair comparison | 55 (50 + 5 sentinels) |
 | `/test2_2afc` | Reference matching | 55 (50 + 5 sentinels) |
 | `/test3_matching` | In-context matching | 55 (50 + 5 sentinels) |
+| `/test3.2_matching2` | Two-option in-context matching | 55 (50 + 5 sentinels) |
 | `/test4_mm` | Multiple matching | 55 (50 + 5 sentinels) |
 
 `/inhouse` signs in with the internal `gilab-inhouse` flow automatically and
@@ -138,10 +141,11 @@ starts consent, demographics, the appearance guide and that task's instruction
 screen. The participant enters only the username; the generated Prolific files
 repeat it as the password for import compatibility. Its session trials are selected on
 page load. The first trial is preloaded before the task starts, then the current
-and next two trials are preloaded while the participant advances. All four
-tests use lossless WebP thumbnails in their normal layouts: square material
+and next two trials are preloaded while the participant advances. All five
+participant tests use WebP thumbnails in their normal layouts: square material
 renders are 512 x 512, while the Test 3 reference and question composites are
-768 x 256 and 1152 x 256 respectively. Opening the zoom view still loads the
+768 x 256 and 1152 x 256 respectively. Test 3.2 uses 768 x 256 references and
+896 x 256 two-option question scenes. Opening the zoom view still loads the
 original full-resolution PNG. If a thumbnail is temporarily absent from R2,
 the browser falls back to its original PNG instead of blocking the study.
 
@@ -155,7 +159,9 @@ The generated directories (not committed to this frontend repository) are:
 
 - `../datasetv9/thumbnails/` (8100 square renders);
 - `../datasetv9/groups4/thumbnails/` (1200 Test 3 composites from `renders3`);
-- `../datasetv9/groups4/sentinels_thumbnails/` (10 Test 3 sentinel composites).
+- `../datasetv9/groups4/sentinels_thumbnails/` (10 Test 3 sentinel composites);
+- `../datasetv9/groups3/thumbnails/` (1200 Test 3.2 composites);
+- `../datasetv9/groups3/sentinels_thumbnails/` (10 Test 3.2 sentinel composites).
 
 Upload them to R2 under those same object prefixes before publishing the
 frontend. Re-running the command is incremental; use `--force` only when every
@@ -405,9 +411,10 @@ manifests, rebuild and let the Pages workflow sanitize the deployment artifact:
 npm run build
 ```
 
-Local development currently uses the public `r2.dev` origin. GitHub Pages
-requires the repository variable `STIMULUS_BASE_URL` to contain a production
-R2 custom domain; the workflow rejects `r2.dev`. Dataset paths in browser
+The checked-in runtime configuration uses the production stimulus origin
+`https://stimuli.santiagojn.xyz`. GitHub Pages also requires the repository
+variable `STIMULUS_BASE_URL` to contain that production R2 custom domain; the
+workflow rejects `r2.dev`. Dataset paths in browser
 manifests are appended to that origin, while manifests, tutorials and interface
 assets continue to be served by the study itself.
 

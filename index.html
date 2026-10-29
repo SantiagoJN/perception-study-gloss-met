@@ -11,7 +11,7 @@
       // Keep assets rooted at the study for direct and nested anonymous routes.
       const routeParts = location.pathname.replace(/\/+$/, '').split('/');
       const route = routeParts[routeParts.length - 1];
-      if (['preview', 'testing', 'inhouse', 'test1_pair_comparison', 'test2_2afc', 'test3_matching', 'test4_mm'].includes(route)) {
+      if (['preview', 'testing', 'inhouse', 'test1_pair_comparison', 'test2_2afc', 'test3_matching', 'test3.2_matching2', 'test4_mm'].includes(route)) {
         const base = document.createElement('base');
         const anonymousRoute = routeParts[routeParts.length - 2] === 'anon';
         const relativeBase = anonymousRoute

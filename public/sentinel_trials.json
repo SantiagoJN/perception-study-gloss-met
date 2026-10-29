@@ -270,6 +270,43 @@
           }
         ]
       }
+    ],
+    "test3_2": [
+      {
+        "sentinel_id": "SENTINEL_T32_01",
+        "reference_scene": "datasetv9/groups3/sentinels/[sentinel_01][reference][machine_shop][ridges_1].png",
+        "question_scene": "datasetv9/groups3/sentinels/[sentinel_01][question][machine_shop][bumpiness_1].png",
+        "shared_factor": "geometry",
+        "correct_option": 1
+      },
+      {
+        "sentinel_id": "SENTINEL_T32_02",
+        "reference_scene": "datasetv9/groups3/sentinels/[sentinel_02][reference][chinese_garden][bumpiness_2].png",
+        "question_scene": "datasetv9/groups3/sentinels/[sentinel_02][question][machine_shop][bumpiness_2].png",
+        "shared_factor": "illumination",
+        "correct_option": 2
+      },
+      {
+        "sentinel_id": "SENTINEL_T32_03",
+        "reference_scene": "datasetv9/groups3/sentinels/[sentinel_03][reference][canary_wharf][sphere].png",
+        "question_scene": "datasetv9/groups3/sentinels/[sentinel_03][question][forest_cave][sphere].png",
+        "shared_factor": "illumination",
+        "correct_option": 1
+      },
+      {
+        "sentinel_id": "SENTINEL_T32_04",
+        "reference_scene": "datasetv9/groups3/sentinels/[sentinel_04][reference][forest_cave][ridges_0].png",
+        "question_scene": "datasetv9/groups3/sentinels/[sentinel_04][question][forest_cave][blob].png",
+        "shared_factor": "geometry",
+        "correct_option": 2
+      },
+      {
+        "sentinel_id": "SENTINEL_T32_05",
+        "reference_scene": "datasetv9/groups3/sentinels/[sentinel_05][reference][chinese_garden][blob].png",
+        "question_scene": "datasetv9/groups3/sentinels/[sentinel_05][question][chinese_garden][sphere].png",
+        "shared_factor": "geometry",
+        "correct_option": 1
+      }
     ]
   }
 }

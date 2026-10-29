@@ -10,7 +10,7 @@ if (!inputPath || !outputDirectory) {
 
 const assignments = JSON.parse(readFileSync(resolve(inputPath), 'utf8'));
 if (!Array.isArray(assignments) || !assignments.length) throw new Error('assignments.json must contain a non-empty array.');
-const studyTypes = new Set(['pairJudgment', 'forcedChoice', 'sceneMatching', 'selection']);
+const studyTypes = new Set(['pairJudgment', 'forcedChoice', 'sceneMatching', 'contextMatching2', 'selection']);
 const usernames = new Set();
 const seeds = new Set();
 const csvRows = [['username', 'password', 'study_type', 'assignment_seed']];

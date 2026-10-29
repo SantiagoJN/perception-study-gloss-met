@@ -33,7 +33,7 @@ def resolve_image(relative: str) -> Path:
         )
         prefix = "datasetv9/renders/"
         return render_root / relative[len(prefix):]
-    if relative.startswith("datasetv9/groups4/"):
+    if relative.startswith(("datasetv9/groups4/", "datasetv9/groups3/")):
         return ROOT / relative
     return PUBLIC / relative
 
@@ -48,6 +48,12 @@ def resolve_thumbnail(relative: str) -> tuple[Path, tuple[int, int]] | None:
     if relative.startswith("datasetv9/groups4/sentinels/"):
         expected = (768, 256) if "[reference]" in relative else (1152, 256)
         return ROOT / "datasetv9/groups4/sentinels_thumbnails" / suffix, expected
+    if relative.startswith("datasetv9/groups3/renders/"):
+        expected = (768, 256) if "_reference_" in relative else (896, 256)
+        return ROOT / "datasetv9/groups3/thumbnails" / suffix, expected
+    if relative.startswith("datasetv9/groups3/sentinels/"):
+        expected = (768, 256) if "[reference]" in relative else (896, 256)
+        return ROOT / "datasetv9/groups3/sentinels_thumbnails" / suffix, expected
     return None
 
 
@@ -75,15 +81,17 @@ def main() -> None:
     pairs = load("study_pairs.json")
     forced = load("forced_choice_trials.json")["trials"]
     scenes = load("scene_matching_trials.json")["trials"]
+    contexts2 = load("context_matching2_trials.json")["trials"]
     training = load("scene_matching_training.json")["examples"]
     selections = load("selection_trials.json")["trials"]
     sentinels = load("sentinel_trials.json")
     answers = load("testing_ground_truth.json")
 
-    assert [len(pairs), len(forced), len(scenes), len(training), len(selections)] == [600, 600, 600, 4, 600]
+    assert [len(pairs), len(forced), len(scenes), len(contexts2), len(training), len(selections)] == [600, 600, 600, 600, 4, 600]
     assert_unique((item["pair_id"] for item in pairs), "pair IDs")
     assert_unique((item["trial_id"] for item in forced), "forced-choice IDs")
     assert_unique((item["trial_id"] for item in scenes), "scene IDs")
+    assert_unique((item["trial_id"] for item in contexts2), "two-option context IDs")
     assert_unique((item["training_id"] for item in training), "scene-training IDs")
     assert_unique((item["trial_id"] for item in selections), "selection IDs")
     assert sentinels["positions"] == [2, 4, 8, 12, 15]
@@ -93,7 +101,7 @@ def main() -> None:
     assert sentinels.get("screening_version") == worker_version.group(1), (
         "The public sentinel manifest and Worker answer key are out of sync"
     )
-    assert set(sentinels["tests"]) == {"test1", "test2", "test3", "test4"}
+    assert set(sentinels["tests"]) == {"test1", "test2", "test3", "test3_2", "test4"}
     assert all(len(items) == 5 for items in sentinels["tests"].values())
     assert_unique(
         (item["sentinel_id"] for items in sentinels["tests"].values() for item in items),
@@ -139,6 +147,16 @@ def main() -> None:
         assert len(item["first_scene"]) == len(item["second_scene"]) == 1
         assert item["correct_option"] in (1, 2, 3)
         assert item["first_scene"][0]["group_id"] == item["second_scene"][0]["group_id"]
+    context_by_source = {item["source_test2_trial_id"]: item for item in contexts2}
+    assert set(context_by_source) == {item["trial_id"] for item in forced}
+    assert Counter(item["difficulty_level"] for item in contexts2) == forced_levels
+    assert Counter(item["shared_factor"] for item in contexts2) == scene_changes
+    for forced_item in forced:
+        item = context_by_source[forced_item["trial_id"]]
+        assert item["target_label"] == "R"
+        assert len(item["first_scene"]) == len(item["second_scene"]) == 1
+        assert item["correct_option"] == (1 if forced_item["correct_option"] == "A" else 2)
+        assert item["family_id"] == forced_item["family_id"]
     for item in training:
         assert item["target_label"] == "R"
         assert len(item["first_scene"]) == len(item["second_scene"]) == 1
@@ -186,6 +204,7 @@ def main() -> None:
     assert set(answers["pairs"]) == {item["pair_id"] for item in pairs}
     assert set(answers["forced_choices"]) == {item["trial_id"] for item in forced}
     assert set(answers["scene_matches"]) == {item["trial_id"] for item in scenes}
+    assert set(answers["context_matches2"]) == {item["trial_id"] for item in contexts2}
     assert set(answers["selections"]) == {item["trial_id"] for item in selections}
 
     image_paths = set()
@@ -196,6 +215,8 @@ def main() -> None:
         image_paths.update(option["image_path"] for option in item["options"])
     for item in [*scenes, *training]:
         image_paths.update(image["image_path"] for image in [*item["first_scene"], *item["second_scene"]])
+    for item in contexts2:
+        image_paths.update(image["image_path"] for image in [*item["first_scene"], *item["second_scene"]])
     for item in selections:
         image_paths.add(item["reference"]["image_path"])
         image_paths.update(candidate["image_path"] for candidate in item["candidates"])
@@ -204,6 +225,8 @@ def main() -> None:
     for item in sentinels["tests"]["test2"]:
         image_paths.update((item["reference"], item["solution"], item["confounder"]))
     for item in sentinels["tests"]["test3"]:
+        image_paths.update((item["reference_scene"], item["question_scene"]))
+    for item in sentinels["tests"]["test3_2"]:
         image_paths.update((item["reference_scene"], item["question_scene"]))
     for item in sentinels["tests"]["test4"]:
         image_paths.add(item["reference"])
@@ -234,6 +257,7 @@ def main() -> None:
         "pairs": len(pairs),
         "forced_choices": len(forced),
         "scene_matches": len(scenes),
+        "context_matches2": len(contexts2),
         "scene_training": len(training),
         "selections": len(selections),
         "unique_image_references": len(image_paths),

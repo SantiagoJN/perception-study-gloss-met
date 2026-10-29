@@ -90,6 +90,12 @@ class StudyHandler(SimpleHTTPRequestHandler):
             relative = request_path[len(groups4_prefix):]
             candidate = (groups4_root / relative).resolve()
             return candidate if contained(candidate, groups4_root) else None
+        groups3_prefix = "/datasetv9/groups3/"
+        if request_path.startswith(groups3_prefix):
+            groups3_root = (ROOT / "datasetv9/groups3").resolve()
+            relative = request_path[len(groups3_prefix):]
+            candidate = (groups3_root / relative).resolve()
+            return candidate if contained(candidate, groups3_root) else None
         relative = request_path.lstrip("/")
         candidate = (DIST / relative).resolve()
         if not contained(candidate, DIST.resolve()):

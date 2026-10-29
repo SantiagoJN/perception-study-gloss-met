@@ -9,7 +9,7 @@ const deploymentVersion = (process.env.GITHUB_SHA || `local-${Date.now()}`).repl
 const html = readFileSync(index, 'utf8').replaceAll('__DEPLOYMENT_VERSION__', deploymentVersion);
 writeFileSync(index, html);
 
-const participantRoutes = ['test1_pair_comparison', 'test2_2afc', 'test3_matching', 'test4_mm'];
+const participantRoutes = ['test1_pair_comparison', 'test2_2afc', 'test3_matching', 'test3.2_matching2', 'test4_mm'];
 for (const route of ['preview', 'testing', 'inhouse', ...participantRoutes, ...participantRoutes.map((route) => `anon/${route}`)]) {
   const routeDirectory = join(dist, route);
   mkdirSync(routeDirectory, { recursive: true });
